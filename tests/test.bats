@@ -207,6 +207,38 @@ count_parquet_files() { find "$1" -name "*.parquet" | wc -l; }
     [[ $csv_lines -gt $original_count ]]
 }
 
+@test "chunking small files with --rows" {
+    # Use the first object file as test
+    local first_object_file=$(get_first_parquet_file "$OBJECT_DATA_DIR")
+    local basename=$(basename "$first_object_file" .parquet)
+    local chunk_size=1000
+
+    # Use TEST_OUTPUT_DIR for clean output
+    run "$SCRIPT_PATH" "$first_object_file" --rows "$chunk_size" -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "✅" ]]
+    [[ "$output" =~ "rows_per_file=$chunk_size" ]]
+
+    # Should produce multiple files like person-01-1.ndjson, person-01-2.ndjson, ...
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${basename}-*.ndjson" | wc -l)
+    [ "$chunks_found" -ge 2 ] # Should be at least 2 chunks if file is large enough
+
+    # Each chunk file should be non-empty
+    for f in "$TEST_OUTPUT_DIR"/${basename}-*.ndjson; do
+        file_exists_and_not_empty "$f"
+    done
+
+    # Total lines across all chunks should equal the original file's row count
+    run duckdb -c "SELECT COUNT(*) FROM read_parquet('$first_object_file');"
+    [ "$status" -eq 0 ]
+    local total_rows=$(echo "$output" | grep -Eo '[0-9]+' | tail -1)
+    local lines_in_chunks=$(cat "$TEST_OUTPUT_DIR"/${basename}-*.ndjson | wc -l)
+    [ "$lines_in_chunks" -eq "$total_rows" ]
+
+    echo "Chunked $first_object_file into $chunks_found NDJSON files, $lines_in_chunks lines total" >&3
+}
+
+
 @test "performance check" {
     cd "$TEST_OUTPUT_DIR"
     local start_time=$(date +%s)

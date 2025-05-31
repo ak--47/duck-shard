@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# parquet-to.sh – Portable, works on macOS & Linux. Output directory supported.
+# parquet-to.sh – Portable, works on macOS & Linux. Output directory & row splitting supported.
 
 set -euo pipefail
 
@@ -15,13 +15,14 @@ FORMAT="ndjson"
 COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
+ROWS_PER_FILE=0
 
 print_help() {
   cat <<EOF
 
 Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] \\
        [-f|--format <ndjson|parquet|csv>] [-c|--cols <col1,col2,...>] [--dedupe] \\
-       [-o|--output <output_dir>]
+       [-o|--output <output_dir>] [-r|--rows <rows_per_file>]
 
   <input_path>          Path to a Parquet file or directory
   [max_parallel_jobs]   Parallel jobs when not single-file (default = CPU cores)
@@ -31,6 +32,7 @@ Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] 
   -c, --cols            Comma-separated list of columns (default = all)
   --dedupe              Remove duplicate rows based on selected columns
   -o, --output          Output directory for results (per-file mode only)
+  -r, --rows            Split output files with N rows each (incompatible with --single-file)
 
 EOF
 }
@@ -56,6 +58,10 @@ while [[ $# -gt 0 ]]; do
     -o|--output)
       [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
       OUTPUT_DIR="$2"; shift 2 ;;
+    -r|--rows)
+      [[ $# -ge 2 ]] || { echo "Error: --rows needs an integer argument"; exit 1; }
+      [[ "$2" =~ ^[0-9]+$ ]] || { echo "Error: --rows must be an integer"; exit 1; }
+      ROWS_PER_FILE="$2"; shift 2 ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
@@ -89,7 +95,11 @@ case "$FORMAT" in
   *) echo "Error: --format must be ndjson, parquet, or csv"; exit 1 ;;
 esac
 
-echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}"
+if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
+  echo "Error: --rows cannot be used with --single-file mode"; exit 1
+fi
+
+echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}"
 
 if $SINGLE_FILE && [[ -z "${OUTPUT_FILENAME:-}" ]]; then
   if [[ -d "$INPUT_PATH" ]]; then
@@ -108,7 +118,42 @@ dedupe_select_clause() {
   $DEDUPE && echo "SELECT DISTINCT $sel" || echo "SELECT $sel"
 }
 
+split_convert_file() {
+  local infile="$1"
+  local base="$(basename "${infile%.*}")"
+  local sel; sel=$(dedupe_select_clause)
+  local row_count
+  # Only get the last number output (the count)
+  row_count=$(duckdb -c "SELECT COUNT(*) FROM read_parquet('$infile');" | grep -Eo '[0-9]+' | tail -1)
+  local splits=$(( (row_count + ROWS_PER_FILE - 1) / ROWS_PER_FILE ))
+  local i=1
+  local offset=0
+  while (( offset < row_count )); do
+    local outbase="${base}-${i}.$EXT"
+    local out
+    if [[ -n "${OUTPUT_DIR:-}" ]]; then
+      out="$OUTPUT_DIR/$outbase"
+    else
+      out="$(dirname "$infile")/$outbase"
+    fi
+    [[ -f "$out" ]] && rm -f "$out"
+    echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
+    duckdb -c "COPY (
+      $sel FROM read_parquet('$infile')
+      LIMIT $ROWS_PER_FILE OFFSET $offset
+    ) TO '$out' ($COPY_OPTS);"
+    echo "✅ $out"
+    ((i++))
+    ((offset+=ROWS_PER_FILE))
+  done
+}
+
+
 convert_file() {
+  if (( ROWS_PER_FILE > 0 )); then
+    split_convert_file "$1"
+    return
+  fi
   local infile="$1"
   local outbase
   outbase="$(basename "${infile%.*}").$EXT"
@@ -125,8 +170,8 @@ convert_file() {
   echo "✅ $out"
 }
 
-export -f convert_file dedupe_select_clause select_clause
-export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR
+export -f convert_file split_convert_file dedupe_select_clause select_clause
+export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR ROWS_PER_FILE
 
 if [[ -d "$INPUT_PATH" ]]; then
   FILES=()

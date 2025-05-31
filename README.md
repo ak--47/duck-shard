@@ -37,6 +37,7 @@ Where `input_path` is a `.parquet` file, or a **directory** full of `.parquet` f
 | `-s`            | Merge all into a single output file              |
 | `-s filename`   | Merge all into a single file (specify name)      |
 | `-o output_dir` | Write outputs to this directory (per-file mode)  |
+| `-r N`		| set max rows per file   |
 | `-h`            | Print help                                       |
 
 ---
