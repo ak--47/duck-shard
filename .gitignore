@@ -1,3 +1,5 @@
 .DS_Store
 /tests/testData/eventData
 /tests/testData/objectData
+/archive/*
+!/archive/.gitkeep

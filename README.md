@@ -1,149 +1,170 @@
-# parquet-to
+# 🦆 duck-shard 🗂️
 
 ## 🤨 wat.
 
-Convert a folder (or file) full of Parquet files to NDJSON, CSV, or Parquet — **using DuckDB**.
+**The ultimate "batch everything to everything" CLI for your data lake.**
 
-Fast, flexible, cross-platform, and designed for real-world batch/ETL jobs. Great for analytics engineering, data science, and just poking at mountains of Parquet data from the CLI. Batch deduplication? Yes. Parallel file conversion? You bet. Merge everything into one file? Why not?!?!
+Convert folders or files of **Parquet**, **CSV**, or **NDJSON** (even JSONL/JSON) into...
+**NDJSON**, **CSV**, or **Parquet**.
+*Deduplicate. Merge. Split into row-limited shards. Parallelize across all your CPU cores. Output wherever you want.*
+Powered by DuckDB. Cross-platform, no Python, no JVM, no drama.
 
-**No Python required. No JVM. No drama.**
+**Perfect for:**
 
-
-## 👔 tldr;
-
-Convert an entire directory of Parquet files (or a single file) to NDJSON, CSV, or Parquet — *fast*. Optionally deduplicate, subset columns, or merge everything into one giant file.
-
-**You need [DuckDB](https://duckdb.org/) installed and on your \$PATH.**
+* Analytics engineering and data science
+* Batch ETL jobs
+* Getting data OUT of your warehouse or data lake FAST
 
 ---
 
-### 💻 CLI usage
+## 👔 tldr;
+
+Convert *any* supported file (or whole directory) to *any* supported format, at speed, with zero dependencies beyond DuckDB.
+
+**Just install [DuckDB](https://duckdb.org/), drop in `duck-shard.sh`, and go.**
+
+---
+
+## 💻 CLI usage
 
 ```bash
-./parquet-to.sh <input_path> [max_parallel_jobs] [options]
+./duck-shard.sh <input_path> [max_parallel_jobs] [options]
 ```
 
-Where `input_path` is a `.parquet` file, or a **directory** full of `.parquet` files.
+Where `input_path` is a single file (any supported type) or a **directory** containing
+`.parquet`, `.csv`, `.ndjson`, `.jsonl`, or `.json` files.
 
-#### Common options
+---
+
+### 🔧 Options (partial list)
 
 | Option          | Meaning                                          |
 | --------------- | ------------------------------------------------ |
-| `-f csv`        | Output CSV files                                 |
-| `-f ndjson`     | Output NDJSON files (default)                    |
-| `-f parquet`    | Output Parquet files (rewrite/merge)             |
+| `-f ndjson`     | Output as NDJSON files (default)                 |
+| `-f csv`        | Output as CSV                                    |
+| `-f parquet`    | Output as Parquet (merge/rewrite)                |
 | `-c col1,col2`  | Only include certain columns                     |
 | `--dedupe`      | Remove duplicates (across all or chosen columns) |
-| `-s`            | Merge all into a single output file              |
-| `-s filename`   | Merge all into a single file (specify name)      |
-| `-o output_dir` | Write outputs to this directory (per-file mode)  |
-| `-r N`		| set max rows per file   |
+| `-s`            | Merge everything into a single file              |
+| `-s filename`   | ...and specify the name for merged output        |
+| `-o output_dir` | Directory to place per-file outputs              |
+| `-r N`          | Split outputs with N rows per file               |
 | `-h`            | Print help                                       |
 
 ---
 
-#### 🚀 Examples
+## 🚀 Examples
 
-**Convert a single file to NDJSON:**
+**Convert a single Parquet to NDJSON:**
 
 ```bash
-./parquet-to.sh ./data/mydata.parquet
+./duck-shard.sh ./data/part-1.parquet
 ```
 
-**Convert a folder to CSVs (in parallel):**
+**Convert a directory of CSV files to NDJSON:**
 
 ```bash
-./parquet-to.sh ./data/ -f csv -o ./out/
+./duck-shard.sh ./testData/csv -f ndjson -o ./out/
 ```
 
-**Merge a directory into a single NDJSON:**
+**Convert a folder of NDJSON to a merged Parquet file:**
 
 ```bash
-./parquet-to.sh ./data/ -s merged.ndjson
+./duck-shard.sh ./testData/ndjson -s all.parquet -f parquet
 ```
 
-**Merge a directory into a single Parquet, deduping on all columns:**
+**Deduplicate on just "event" and "user\_id":**
 
 ```bash
-./parquet-to.sh ./data/ -s merged.parquet -f parquet --dedupe
+./duck-shard.sh ./testData/parquet -f csv -c event,user_id --dedupe -o ./deduped
 ```
 
-**Convert a directory, dedupe on specific columns, write outputs to ./results:**
+**Split a file into shards of 5000 rows:**
 
 ```bash
-./parquet-to.sh ./data/ -f ndjson -c id,email --dedupe -o ./results
+./duck-shard.sh ./data/part-1.parquet -r 5000 -o ./shards/
 ```
 
-**Convert with custom parallelism:**
+**Run with 4 parallel jobs:**
 
 ```bash
-./parquet-to.sh ./data/ 4 -f csv -o ./csv_out
+./duck-shard.sh ./testData/ndjson 4 -f csv -o ./csvs
 ```
 
-**Help:**
+**Show help:**
 
 ```bash
-./parquet-to.sh -h
+./duck-shard.sh -h
 ```
 
 ---
 
 ## 🗝 Features
 
-* Convert one file or a whole folder of Parquet files
-* NDJSON, CSV, or Parquet output (your choice)
-* Merge all files into a single output, or convert each file individually
-* Write outputs wherever you want (`-o ./my/output/dir`)
-* Parallel conversion (auto-detects your CPU)
-* Deduplicate by any column (or all columns)
-* Works on macOS and Linux
-* Tiny dependencies: just DuckDB and bash
+* 🚀 **Convert Parquet, CSV, NDJSON, JSONL, JSON** — from file or whole folder
+* 🔄 **To NDJSON, CSV, or Parquet** — your choice!
+* 🧩 **Merge to single file** (`-s`/`--single-file`) or keep outputs per input
+* 💾 **Custom output directory** with `-o`
+* 🏎 **Parallel processing** (as many jobs as you want)
+* 🦄 **Deduplication** (by all columns, or by a subset)
+* ✂️ **Column selection** with `-c`
+* 🪓 **Split by rows** (e.g. `-r 10000` gives you part-1-1.ndjson, part-1-2.ndjson, ...)
+* 🦾 **Works on macOS & Linux** — BSD and GNU tools supported
+* 🦆 **No Python, No Node, No JVM** — just DuckDB and bash
 
 ---
 
 ## 📦 Installation
 
-Just download [`parquet-to.sh`](./parquet-to.sh), `chmod +x parquet-to.sh`, and run it. No Node, no Python, no nonsense.
+1. **Install [DuckDB](https://duckdb.org/docs/installation/)** (must be on your `$PATH`).
+2. Download [`duck-shard.sh`](./duck-shard.sh).
+3. Make it executable:
 
-You **must** have [`duckdb`](https://duckdb.org/docs/installation/) installed and on your PATH.
+   ```bash
+   chmod +x duck-shard.sh
+   ```
+4. (Optional) Install Bats for testing:
 
-You can also install it via `make`:
-
-```bash
-make install-deps
-```
+   ```bash
+   make install-deps
+   ```
 
 ---
 
-## 🏗️ Implementation notes
+## 🏗️ Implementation Notes
 
-* This script runs DuckDB SQL queries under the hood. You can extend it!
-* If you specify `--dedupe` and `--cols`, deduplication is performed on just those columns (rest are dropped).
-* Outputs in per-file mode go to the same directory as the source Parquet unless you use `-o`.
-* Output filenames match the input base name, with the appropriate extension.
-* Parallelism: defaults to all your CPU cores, override with a number after the path (`./parquet-to.sh ./data 4 ...`).
-* Tested with GNU and BSD tools (works on Mac and Linux).
+* DuckDB's file extension magic means you don't need to specify format — just point to the right files!
+* Supports `.parquet`, `.csv`, `.ndjson`, `.jsonl`, `.json` as input.
+* Output file(s) auto-named to match input unless overridden.
+* Output directory for per-file mode (`-o`), or current dir by default.
+* Single-file mode (`-s`) incompatible with chunking (`-r`).
+* Parallel conversion uses background processes — tested on macOS & Linux.
 
 ---
 
 ## 🤷 why?
 
-Because sometimes you just want to flatten a pile of Parquet files into something you can grep, `jq`, or upload to something else. And you want to do it *now*, without spinning up Spark or Python scripts.
+Because sometimes you just want to crack open a bucket of files and make them *useful* — without spinning up Spark or wrestling with Pandas. No one-liner should require a 2GB docker image.
 
 ---
 
 ## 🧪 Testing
 
-Tests are run with [`bats`](https://github.com/bats-core/bats-core) and included test Parquet data. See [`tests/test.bats`](./tests/test.bats).
-
-Or just run the tests:
+Run with [`bats`](https://github.com/bats-core/bats-core) and provided sample data:
 
 ```bash
 make test
 ```
 
+All file types, modes, and options are tested. See [`tests/test.bats`](./tests/test.bats).
+
 ---
 
 ## 🪧 License
 
-MIT — go wild. PRs welcome. Bugs? [File an issue](https://github.com/ak--47/duck-shard/issues) or PR.
+MIT — go wild. PRs, feedback, and wild data dreams welcome.
+[Raise an issue or open a PR!](https://github.com/ak--47/duck-shard/issues)
+
+---
+
+**Happy sharding!** 🦆
