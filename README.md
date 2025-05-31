@@ -8,7 +8,6 @@ Fast, flexible, cross-platform, and designed for real-world batch/ETL jobs. Grea
 
 **No Python required. No JVM. No drama.**
 
-![Convert Parquet to NDJSON/CSV/Parquet with DuckDB](https://aktunes.neocities.org/mp-import.gif)
 
 ## 👔 tldr;
 
