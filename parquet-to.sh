@@ -152,7 +152,9 @@ convert_file() {
   duckdb -c "COPY ($sel FROM read_parquet('$infile')) TO '$out' ($COPY_OPTS);"
   echo "✅ $out"
 }
-export -f convert_file dedupe_select_clause select_clause EXT COPY_OPTS DEDUPE
+export -f convert_file dedupe_select_clause select_clause
+export EXT COPY_OPTS DEDUPE
+
 
 ### 10) Main logic
 if [[ -d "$INPUT_PATH" ]]; then
