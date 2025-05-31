@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
-# parquet-to.sh - Convert Parquet files to NDJSON, Parquet, or CSV using DuckDB
+# parquet-to.sh - Convert Parquet files to NDJSON, Parquet, or CSV using DuckDB, with optional deduplication.
 # Usage: ./parquet-to.sh <input_path> [max_parallel_jobs] \
 #   [-s|--single-file [output_filename]] \
 #   [-f|--format <ndjson|parquet|csv>] \
-#   [-c|--cols <column1,column2,...>]
+#   [-c|--cols <column1,column2,...>] \
+#   [--dedupe]
 
 set -euo pipefail
 
@@ -20,11 +21,12 @@ SINGLE_FILE=false
 OUTPUT_FILENAME=""
 FORMAT="ndjson"
 COLUMNS="*"        # default = all columns
+DEDUPE=false
 
 print_help() {
   cat <<EOF
-Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] \
-[-f|--format <ndjson|parquet|csv>] [-c|--cols <col1,col2,...>]
+Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] \\
+       [-f|--format <ndjson|parquet|csv>] [-c|--cols <col1,col2,...>] [--dedupe]
 
   <input_path>          Path to a Parquet file or directory
   [max_parallel_jobs]   Parallel jobs when not single-file
@@ -32,19 +34,17 @@ Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] 
      [output_filename]  Optional: name for merged file
   -f, --format          ndjson (default) | parquet | csv
   -c, --cols            Comma-separated list of columns (default=all)
+  --dedupe              Remove duplicate rows based on selected columns
 
 Examples:
-  # Single-file parquet → NDJSON
-  $0 data/file.parquet
+  # Single-file parquet → NDJSON, deduplicated on all columns
+  $0 data/file.parquet --dedupe
 
-  # Directory → CSV in 8 jobs
-  $0 data/ 8 -f csv
+  # Directory → CSV in 8 jobs, deduplicated by id,name
+  $0 data/ 8 -f csv -c id,name --dedupe
 
-  # Directory → one Parquet
-  $0 data/ -s combined.parquet -f parquet
-
-  # Only two columns
-  $0 data/file.parquet -c id,name
+  # Directory → one Parquet, dedupe on all columns
+  $0 data/ -s combined.parquet -f parquet --dedupe
 EOF
 }
 
@@ -64,13 +64,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     -c|--cols)
       [[ $# -ge 2 ]] || { echo "Error: --cols needs an argument"; exit 1; }
-      # build a quoted list: "col1","col2",...
+      # Just store as-is (comma separated)
+      COLUMNS_RAW="$2"
       COLUMNS=$(echo "$2" \
         | tr ',' '\n' \
         | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
-        | awk '{ printf "\"%s\",", $0 }' \
+        | awk '{ printf "%s,", $0 }' \
         | sed 's/,$//')
       shift 2
+      ;;
+    --dedupe)
+      DEDUPE=true; shift
       ;;
     -h|--help)
       print_help; exit 0
@@ -99,12 +103,12 @@ case "$FORMAT" in
     ;;
 esac
 
-export EXT COPY_OPTS COLUMNS
+export EXT COPY_OPTS
 
-echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE"
+echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE"
 
 ### 6) Default output filename for single-file
-if $SINGLE_FILE && [[ -z "$OUTPUT_FILENAME" ]]; then
+if $SINGLE_FILE && [[ -z "${OUTPUT_FILENAME:-}" ]]; then
   if [[ -d "$INPUT_PATH" ]]; then
     DIR="${INPUT_PATH%/}"
     OUTPUT_FILENAME="$(basename "$DIR").$EXT"
@@ -113,26 +117,44 @@ if $SINGLE_FILE && [[ -z "$OUTPUT_FILENAME" ]]; then
   fi
 fi
 
-### 7) Build a SELECT clause
+### 7) Build SELECT clause (for column subset)
+# Returns "col1, col2, ..." or "*"
 select_clause() {
-  # if user asked for *, use *
-  [[ "$COLUMNS" == "*" ]] && { echo "*"; return; }
-  # otherwise COLUMNS is already "\"col1\",\"col2\""
-  echo "$COLUMNS"
+  if [[ "${COLUMNS:-*}" == "*" ]]; then
+    echo "*"
+  else
+    echo "$COLUMNS"
+  fi
 }
 
-### 8) Per-file converter (when NOT single-file)
+### 8) Build DEDUPE clause (DISTINCT or SELECT)
+# If dedupe, use SELECT DISTINCT on the chosen columns
+#    - If columns specified, select those columns DISTINCT (but must output only those columns)
+#    - If columns not specified, DISTINCT *
+# If not dedupe, just SELECT columns (could be *)
+dedupe_select_clause() {
+  local select_cols
+  select_cols=$(select_clause)
+  if $DEDUPE; then
+    echo "SELECT DISTINCT $select_cols"
+  else
+    echo "SELECT $select_cols"
+  fi
+}
+
+### 9) Per-file converter (when NOT single-file)
 convert_file() {
   local infile="$1"
-  local sel; sel=$(select_clause)
   local out="${infile%.*}.$EXT"
+  local sel
+  sel=$(dedupe_select_clause)
   echo "Converting $infile → $out"
-  duckdb -c "COPY (SELECT $sel FROM read_parquet('$infile')) TO '$out' ($COPY_OPTS);"
+  duckdb -c "COPY ($sel FROM read_parquet('$infile')) TO '$out' ($COPY_OPTS);"
   echo "✅ $out"
 }
-export -f convert_file select_clause
+export -f convert_file dedupe_select_clause select_clause EXT COPY_OPTS DEDUPE
 
-### 9) Main logic
+### 10) Main logic
 if [[ -d "$INPUT_PATH" ]]; then
   # directory mode
   mapfile -t files < <(find "$INPUT_PATH" -type f -name '*.parquet')
@@ -140,13 +162,13 @@ if [[ -d "$INPUT_PATH" ]]; then
 
   if $SINGLE_FILE; then
     # merge all via a single DuckDB command
-    sel=$(select_clause)
+    sel=$(dedupe_select_clause)
     # build ARRAY literal of parquet files
     SQL_PATHS=$(printf "'%s'," "${files[@]}")
     SQL_PATHS=${SQL_PATHS%,}
     echo "Merging ${#files[@]} files → $OUTPUT_FILENAME"
     duckdb -c "COPY (
-      SELECT $sel
+      $sel
       FROM read_parquet(ARRAY[${SQL_PATHS}])
     ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     echo "✅ Merged → $OUTPUT_FILENAME"
@@ -154,17 +176,16 @@ if [[ -d "$INPUT_PATH" ]]; then
     # parallel per-file
     printf '%s\n' "${files[@]}" \
       | xargs -n1 -P "$MAX_PARALLEL_JOBS" \
-          bash -c 'convert_file "$0"' 
+          bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi
 
 elif [[ -f "$INPUT_PATH" && "$INPUT_PATH" == *.parquet ]]; then
   # single-file Parquet input
   if $SINGLE_FILE; then
-    # direct copy
-    sel=$(select_clause)
+    sel=$(dedupe_select_clause)
     echo "Converting single file → $OUTPUT_FILENAME"
-    duckdb -c "COPY (SELECT $sel FROM read_parquet('$INPUT_PATH')) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+    duckdb -c "COPY ($sel FROM read_parquet('$INPUT_PATH')) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     echo "✅ $OUTPUT_FILENAME"
   else
     convert_file "$INPUT_PATH"
