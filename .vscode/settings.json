@@ -1,0 +1,23 @@
+{
+    "bats.testOnSave": false,
+    "bats.showTestOutput": true,
+    "files.associations": {
+        "*.bats": "shellscript",
+        "Makefile": "makefile"
+    },
+    "shellcheck.enable": true,
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/tests/testData/**/*.parquet": true
+    },
+    "terminal.integrated.profiles.osx": {
+        "bash": {
+            "path": "bash",
+            "args": ["-l"]
+        }
+    },
+    "terminal.integrated.defaultProfile.osx": "bash"
+}

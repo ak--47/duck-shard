@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+		{
+			"type": "bashdb",
+			"request": "launch",
+			"name": "debug",
+			"cwd": "${workspaceFolder}",
+			"program": "${workspaceFolder}/parquet-to.sh",
+			"args": []
+		},
+        // {
+        //     "name": "Debug parquet-to.sh with sample data",
+        //     "type": "bashdb",
+        //     "request": "launch",
+        //     "program": "${workspaceFolder}/parquet-to.sh",
+        //     "args": ["tests/testData/eventData/events-01.parquet", "-f", "ndjson"],
+        //     "cwd": "${workspaceFolder}",
+        //     "pathBash": "/bin/bash",
+        //     "pathBashdb": "${workspaceFolder}/.vscode/bashdb/bashdb",
+        //     "pathBashdbLib": "${workspaceFolder}/.vscode/bashdb",
+        //     "pathCat": "cat",
+        //     "pathMkfifo": "mkfifo",
+        //     "pathPkill": "pkill",
+        //     "env": {},
+        //     "showDebugOutput": true,
+        //     "trace": true
+        // },
+
+    ]
+}
