@@ -14,7 +14,7 @@ MAX_PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4
 SINGLE_FILE=false
 OUTPUT_FILENAME=""
 FORMAT="ndjson"
-COLUMNS="*"
+SELECT_COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
 ROWS_PER_FILE=0
@@ -56,9 +56,9 @@ while [[ $# -gt 0 ]]; do
     -f|--format) [[ $# -ge 2 ]] || { echo "Error: --format needs an argument"; exit 1; }
       FORMAT="$2"; shift 2 ;;
     -c|--cols) [[ $# -ge 2 ]] || { echo "Error: --cols needs an argument"; exit 1; }
-      COLUMNS="$(echo "$2" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-      COLUMNS="$(echo "$COLUMNS" | paste -sd, -)"
-      [[ -z "$COLUMNS" ]] && COLUMNS="*"
+      SELECT_COLUMNS="$(echo "$2" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      SELECT_COLUMNS="$(echo "$SELECT_COLUMNS" | paste -sd, -)"
+      [[ -z "$SELECT_COLUMNS" ]] && SELECT_COLUMNS="*"
       shift 2 ;;
     --dedupe) DEDUPE=true; shift ;;
     -o|--output) [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
@@ -147,10 +147,10 @@ find_input_files() {
 }
 
 select_clause() {
-  if [[ -z "${COLUMNS:-}" || "${COLUMNS// /}" == "" || "$COLUMNS" == "*" ]]; then
+  if [[ -z "${SELECT_COLUMNS:-}" || "${SELECT_COLUMNS// /}" == "" || "$SELECT_COLUMNS" == "*" ]]; then
     echo "*"
   else
-    echo "$COLUMNS"
+    echo "$SELECT_COLUMNS"
   fi
 }
 
@@ -214,7 +214,7 @@ export -f convert_file split_convert_file dedupe_select_clause select_clause get
 
 load_cloud_creds
 
-echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}"
+echo "🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}"
 
 if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   FILES=()
@@ -249,9 +249,8 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     echo "✅ Merged → $OUTPUT_FILENAME"
   else
-    # --- xargs parallel robust (Bash 3/4/5 safe) ---
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi
