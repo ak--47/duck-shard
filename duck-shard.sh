@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2155
 # duck-shard.sh – DuckDB-based ETL/conversion for local/cloud files, cross-platform.
 
 set -euo pipefail
@@ -210,7 +211,6 @@ convert_file() {
 }
 
 export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name
-export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR ROWS_PER_FILE
 
 load_cloud_creds
 
@@ -249,16 +249,10 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     echo "✅ Merged → $OUTPUT_FILENAME"
   else
-    n=0
-    for f in "${FILES[@]}"; do
-      bash -c 'convert_file "$0"' "$f" &
-      ((n++))
-      if [[ "$n" -ge "$MAX_PARALLEL_JOBS" ]]; then
-        wait -n 2>/dev/null || wait
-        ((n--))
-      fi
-    done
-    wait
+    # --- xargs parallel robust (Bash 3/4/5 safe) ---
+    export -f convert_file
+    export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql
+    printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi
 

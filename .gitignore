@@ -3,3 +3,5 @@
 /tests/testData/objectData
 /archive/*
 !/archive/.gitkeep
+tmp/*
+!/tmp/.gitkeep

@@ -23,6 +23,14 @@ Convert *any* supported file (or whole directory) to *any* supported format, at 
 
 **Just install [DuckDB](https://duckdb.org/), drop in `duck-shard.sh`, and go.**
 
+Or use homebrew:
+
+```bash
+brew tap ak--47/duck-shard  # homebrew-tap
+brew install duckdb
+duck-shard ./myfolder/ -f csv -o ./output/
+```
+
 ---
 
 ## 💻 CLI usage

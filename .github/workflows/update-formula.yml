@@ -1,0 +1,37 @@
+name: Update duck-shard formula
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 6 * * *' # daily, for main updates
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+
+      - name: Fetch latest duck-shard.sh
+        run: |
+          curl -sL https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh -o duck-shard.sh
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          sha256sum duck-shard.sh | awk '{print $1}' > sha.txt
+          echo "sha256=$(cat sha.txt)" >> $GITHUB_OUTPUT
+
+      - name: Update Formula file
+        run: |
+          sed -i "s/sha256 \".*\"/sha256 \"$(cat sha.txt)\"/" Formula/duck-shard.rb
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git add Formula/duck-shard.rb
+          git commit -m "Update sha256 for latest duck-shard.sh" || exit 0
+          git push

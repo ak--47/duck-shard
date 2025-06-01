@@ -1,4 +1,4 @@
-# Makefile for parquet-to.sh testing
+# Makefile for duck-shard.sh testing
 
 .PHONY: test test-verbose test-specific clean install-deps help check-deps
 
@@ -70,6 +70,7 @@ clean:
 	@echo "🧹 Cleaning up test artifacts..."
 	@find . -name "*.tmp" -delete 2>/dev/null || true
 	@find . -name "test_temp_*" -type d -exec rm -rf {} + 2>/dev/null || true
+	@find ./tmp -type f ! -name '.gitkeep' -exec rm -f {} + 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
 # Quick test for CI/CD
