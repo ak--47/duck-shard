@@ -159,6 +159,16 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
 }
 
+@test "parquet dir > merged single csv file with --stringify" {
+    cd "$TEST_OUTPUT_DIR"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all_str.csv -f csv --stringify
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "all_str.csv"
+    # Check that there are no obvious type errors in CSV output
+    run grep '\$organic' all_str.csv
+    [ "$status" -eq 0 ] # value should appear as string, not fail on INT128
+}
+
 ##### ==== COLUMN SELECTION TEST ====
 
 @test "specific columns from parquet file > csv" {
@@ -201,17 +211,25 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 @test "error: missing argument for --format" {
     local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    [ -f "$in_file" ]
     run "$SCRIPT_PATH" "$in_file" --format
+    echo "status: $status"
+    echo "output: $output"
     [ "$status" -eq 1 ]
-    [[ "$output" =~ "Error: --format needs an argument" ]]
+    [[ "$output" == *"Error: --format needs an argument"* ]]
 }
+
 
 @test "error: missing argument for --cols" {
     local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
-    run "$SCRIPT_PATH" "$in_file" --cols
+    [ -f "$in_file" ] # ensure file exists
+    run bash -c "$SCRIPT_PATH $in_file --cols 2>&1"
+    echo "status: $status"
+    echo "output: $output"
     [ "$status" -eq 1 ]
-    [[ "$output" =~ "Error: --cols needs an argument" ]]
+    [[ "$output" == *"Error: --cols needs an argument"* ]]
 }
+
 
 @test "error: --rows with --single-file" {
     local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
@@ -219,6 +237,58 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [ "$status" -eq 1 ]
     [[ "$output" =~ "Error: --rows cannot be used with --single-file mode" ]]
 }
+
+@test "error: GCS URI without credentials" {
+    # This will only work if you do NOT have env vars set or default creds
+    local fake_gcs="gs://totally-fake-bucket/myfile.parquet"
+    run "$SCRIPT_PATH" "$fake_gcs"
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "Error" ]]
+}
+
+@test "error: S3 URI without credentials" {
+    local fake_s3="s3://totally-fake-bucket/myfile.parquet"
+    run "$SCRIPT_PATH" "$fake_s3"
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "Error" ]]
+}
+
+@test "error: mixing file types for --single-file" {
+    # Create a temp dir with a parquet and a csv
+    mkdir -p "$TEST_OUTPUT_DIR/mixed"
+    cp "$(get_first_file "$TEST_DATA_DIR/parquet" parquet)" "$TEST_OUTPUT_DIR/mixed/file1.parquet"
+    cp "$(get_first_file "$TEST_DATA_DIR/csv" csv)" "$TEST_OUTPUT_DIR/mixed/file2.csv"
+    run "$SCRIPT_PATH" "$TEST_OUTPUT_DIR/mixed" -s merged.ndjson
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: All files must have the same extension for --single-file" ]]
+}
+
+@test "error: output directory not writable" {
+    local unwritable_dir="$TEST_OUTPUT_DIR/unwritable"
+    mkdir -p "$unwritable_dir"
+    chmod -w "$unwritable_dir"
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" parquet)
+    run "$SCRIPT_PATH" "$in_file" -o "$unwritable_dir"
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "Error" ]]
+    chmod +w "$unwritable_dir" # restore permissions
+}
+
+@test "error: unsupported file extension" {
+    local bogus="$TEST_OUTPUT_DIR/file.bogus"
+    echo 'randomdata' > "$bogus"
+    run "$SCRIPT_PATH" "$bogus"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: Unsupported extension" ]]
+}
+
+@test "help output mentions GCS and S3" {
+    run "$SCRIPT_PATH" -h
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "GCS HMAC credentials" ]]
+    [[ "$output" =~ "S3 HMAC credentials" ]]
+}
+
 
 ##### ==== PERFORMANCE CHECK ====
 

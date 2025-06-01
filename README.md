@@ -31,25 +31,58 @@ Convert *any* supported file (or whole directory) to *any* supported format, at 
 ./duck-shard.sh <input_path> [max_parallel_jobs] [options]
 ```
 
-Where `input_path` is a single file (any supported type) or a **directory** containing
-`.parquet`, `.csv`, `.ndjson`, `.jsonl`, or `.json` files.
+Where `input_path` is a single file (any supported type), a **directory** containing
+`.parquet`, `.csv`, `.ndjson`, `.jsonl`, or `.json` files, or a **cloud storage path** (see below).
 
 ---
 
 ### 🔧 Options (partial list)
 
-| Option          | Meaning                                          |
-| --------------- | ------------------------------------------------ |
-| `-f ndjson`     | Output as NDJSON files (default)                 |
-| `-f csv`        | Output as CSV                                    |
-| `-f parquet`    | Output as Parquet (merge/rewrite)                |
-| `-c col1,col2`  | Only include certain columns                     |
-| `--dedupe`      | Remove duplicates (across all or chosen columns) |
-| `-s`            | Merge everything into a single file              |
-| `-s filename`   | ...and specify the name for merged output        |
-| `-o output_dir` | Directory to place per-file outputs              |
-| `-r N`          | Split outputs with N rows per file               |
-| `-h`            | Print help                                       |
+| Option             | Meaning                                            |
+| ------------------ | -------------------------------------------------- |
+| `-f ndjson`        | Output as NDJSON files (default)                   |
+| `-f csv`           | Output as CSV                                      |
+| `-f parquet`       | Output as Parquet (merge/rewrite)                  |
+| `-c col1,col2`     | Only include certain columns                       |
+| `--dedupe`         | Remove duplicates (across all or chosen columns)   |
+| `-s`               | Merge everything into a single file                |
+| `-s filename`      | ...and specify the name for merged output          |
+| `-o output_dir`    | Directory to place per-file outputs                |
+| `-r N`             | Split outputs with N rows per file                 |
+| `--stringify`      | Coerce all columns to string (useful for CSV/JSON) |
+| `--gcs-key KEY`    | Google Cloud Storage HMAC key (see cloud section)  |
+| `--gcs-secret SEC` | Google Cloud Storage HMAC secret                   |
+| `--s3-key KEY`     | AWS S3 access key                                  |
+| `--s3-secret SEC`  | AWS S3 secret key                                  |
+| `-h`               | Print help                                         |
+
+---
+
+## 🌩️ Cloud Storage Support (GCS & S3)
+
+duck-shard supports reading from and writing to **Google Cloud Storage (`gs://`)** and **Amazon S3 (`s3://`)** buckets, using [DuckDB's httpfs extension](https://duckdb.org/docs/extensions/httpfs.html).
+
+### **Setup**
+
+1. **Enable HMAC authentication for your cloud provider.**
+
+2. Pass your key/secret to duck-shard:
+
+   **Google Cloud Storage:**
+
+   ```
+   ./duck-shard.sh gs://my-bucket/folder/ -f csv --gcs-key <YOUR_KEY_ID> --gcs-secret <YOUR_SECRET>
+   ```
+
+   **Amazon S3:**
+
+   ```
+   ./duck-shard.sh s3://my-bucket/folder/ -f parquet --s3-key <AWS_KEY_ID> --s3-secret <AWS_SECRET>
+   ```
+
+3. Output can be to local disk or (if supported by DuckDB) to a cloud path.
+
+**NOTE:** You need DuckDB v0.9+ with the `httpfs` extension. First time usage may run `INSTALL httpfs` and `LOAD httpfs` automatically.
 
 ---
 
@@ -85,10 +118,22 @@ Where `input_path` is a single file (any supported type) or a **directory** cont
 ./duck-shard.sh ./data/part-1.parquet -r 5000 -o ./shards/
 ```
 
-**Run with 4 parallel jobs:**
+**Convert a GCS bucket folder to local CSV files:**
 
 ```bash
-./duck-shard.sh ./testData/ndjson 4 -f csv -o ./csvs
+./duck-shard.sh gs://my-bucket/data/ -f csv --gcs-key ... --gcs-secret ... -o ./out/
+```
+
+**Merge a folder of Parquet files on S3 into a single NDJSON:**
+
+```bash
+./duck-shard.sh s3://my-bucket/data/ -s all.ndjson -f ndjson --s3-key ... --s3-secret ...
+```
+
+**Coerce all output columns to string (useful for weird CSV/JSON typing issues):**
+
+```bash
+./duck-shard.sh ./testData/parquet -s all.csv -f csv --stringify
 ```
 
 **Show help:**
@@ -101,7 +146,7 @@ Where `input_path` is a single file (any supported type) or a **directory** cont
 
 ## 🗝 Features
 
-* 🚀 **Convert Parquet, CSV, NDJSON, JSONL, JSON** — from file or whole folder
+* 🚀 **Convert Parquet, CSV, NDJSON, JSONL, JSON** — from file, directory, or cloud (GCS/S3)
 * 🔄 **To NDJSON, CSV, or Parquet** — your choice!
 * 🧩 **Merge to single file** (`-s`/`--single-file`) or keep outputs per input
 * 💾 **Custom output directory** with `-o`
@@ -109,6 +154,8 @@ Where `input_path` is a single file (any supported type) or a **directory** cont
 * 🦄 **Deduplication** (by all columns, or by a subset)
 * ✂️ **Column selection** with `-c`
 * 🪓 **Split by rows** (e.g. `-r 10000` gives you part-1-1.ndjson, part-1-2.ndjson, ...)
+* 🌩️ **Cloud support** for GCS & S3 (see above)
+* 🪄 **Stringify columns** (`--stringify`) for messy data
 * 🦾 **Works on macOS & Linux** — BSD and GNU tools supported
 * 🦆 **No Python, No Node, No JVM** — just DuckDB and bash
 
@@ -139,6 +186,8 @@ Where `input_path` is a single file (any supported type) or a **directory** cont
 * Output directory for per-file mode (`-o`), or current dir by default.
 * Single-file mode (`-s`) incompatible with chunking (`-r`).
 * Parallel conversion uses background processes — tested on macOS & Linux.
+* **Cloud support:** httpfs extension loaded automatically for `gs://` and `s3://` URIs.
+* **Stringify mode:** All output columns cast to string (for CSV/NDJSON edge cases).
 
 ---
 

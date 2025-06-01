@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# duck-shard.sh – Portable, works on macOS & Linux. Supports parquet, csv, ndjson, jsonl, json.
+# duck-shard.sh – DuckDB-based ETL/conversion for local/cloud files, cross-platform.
 
 set -euo pipefail
 
@@ -8,6 +8,7 @@ command -v duckdb >/dev/null 2>&1 || {
   exit 1
 }
 
+SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json"
 MAX_PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 SINGLE_FILE=false
 OUTPUT_FILENAME=""
@@ -16,62 +17,62 @@ COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
 ROWS_PER_FILE=0
-
-SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json"
+GCS_KEY_ID=""
+GCS_SECRET=""
+S3_KEY_ID=""
+S3_SECRET=""
 
 print_help() {
   cat <<EOF
 
-Usage: $0 <input_path> [max_parallel_jobs] [-s|--single-file [output_filename]] \\
-       [-f|--format <ndjson|parquet|csv>] [-c|--cols <col1,col2,...>] [--dedupe] \\
-       [-o|--output <output_dir>] [-r|--rows <rows_per_file>]
+Usage: $0 <input_path> [max_parallel_jobs] [options]
 
-  <input_path>          Path to a supported data file or directory (parquet, csv, ndjson, jsonl, json)
-  [max_parallel_jobs]   Parallel jobs when not single-file (default = CPU cores)
-  -s, --single-file     Merge output into one file
-     [output_filename]  Optional: name for merged file
-  -f, --format          ndjson (default) | parquet | csv
-  -c, --cols            Comma-separated list of columns (default = all)
-  --dedupe              Remove duplicate rows based on selected columns
-  -o, --output          Output directory for results (per-file mode only)
-  -r, --rows            Split output files with N rows each (incompatible with --single-file)
+Options:
+  -s, --single-file [output_filename]   Merge into one output file (optional: filename)
+  -f, --format <ndjson|parquet|csv>     Output format (default: ndjson)
+  -c, --cols <col1,col2,...>            Only include specific columns
+  --dedupe                              Remove duplicate rows (by chosen columns)
+  -o, --output <output_dir>             Output directory (per-file mode only)
+  -r, --rows <rows_per_file>            Split output files with N rows each (not for --single-file)
+  --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
+  --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
+  -h, --help                            Print this help
 
 Examples:
-
-  # Convert a CSV to NDJSON, 10000 rows per file, output to ./out/
-  ./duck-shard.sh data.csv --rows 10000 --output ./out/
-
-  # Convert all parquet, csv, ndjson, jsonl, json in ./data/ to CSV
-  ./duck-shard.sh ./data/ -f csv
-
+  $0 data/ -f csv -o ./out/
+  $0 data/ -s merged.ndjson
+  $0 gs://bucket/data/ -f csv --gcs-key ... --gcs-secret ... -o ./out/
 EOF
 }
 
-if [[ $# -eq 0 ]]; then
-  print_help; exit 0
-fi
+if [[ $# -eq 0 ]]; then print_help; exit 0; fi
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case $1 in
-    -s|--single-file)
-      SINGLE_FILE=true; shift
+    -s|--single-file) SINGLE_FILE=true; shift
       if [[ $# -gt 0 && ! $1 =~ ^- ]]; then OUTPUT_FILENAME="$1"; shift; fi ;;
-    -f|--format)
-      [[ $# -ge 2 ]] || { echo "Error: --format needs an argument"; exit 1; }
+    -f|--format) [[ $# -ge 2 ]] || { echo "Error: --format needs an argument"; exit 1; }
       FORMAT="$2"; shift 2 ;;
-    -c|--cols)
-      [[ $# -ge 2 ]] || { echo "Error: --cols needs an argument"; exit 1; }
-      COLUMNS=$(echo "$2" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
-                paste -sd, -); shift 2 ;;
+    -c|--cols) [[ $# -ge 2 ]] || { echo "Error: --cols needs an argument"; exit 1; }
+      COLUMNS="$(echo "$2" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      COLUMNS="$(echo "$COLUMNS" | paste -sd, -)"
+      [[ -z "$COLUMNS" ]] && COLUMNS="*"
+      shift 2 ;;
     --dedupe) DEDUPE=true; shift ;;
-    -o|--output)
-      [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
+    -o|--output) [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
       OUTPUT_DIR="$2"; shift 2 ;;
-    -r|--rows)
-      [[ $# -ge 2 ]] || { echo "Error: --rows needs an integer argument"; exit 1; }
-      [[ "$2" =~ ^[0-9]+$ ]] || { echo "Error: --rows must be an integer"; exit 1; }
+    -r|--rows) [[ $# -ge 2 ]] || { echo "Error: --rows needs an integer argument"; exit 1; }
+      [[ "$2" =~ ^[0-9]+$ ]] || { echo "Error: --rows must be integer"; exit 1; }
       ROWS_PER_FILE="$2"; shift 2 ;;
+    --gcs-key) [[ $# -ge 2 ]] || { echo "Error: --gcs-key needs an argument"; exit 1; }
+      GCS_KEY_ID="$2"; shift 2 ;;
+    --gcs-secret) [[ $# -ge 2 ]] || { echo "Error: --gcs-secret needs an argument"; exit 1; }
+      GCS_SECRET="$2"; shift 2 ;;
+    --s3-key) [[ $# -ge 2 ]] || { echo "Error: --s3-key needs an argument"; exit 1; }
+      S3_KEY_ID="$2"; shift 2 ;;
+    --s3-secret) [[ $# -ge 2 ]] || { echo "Error: --s3-secret needs an argument"; exit 1; }
+      S3_SECRET="$2"; shift 2 ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
@@ -80,16 +81,14 @@ set -- "${POSITIONAL[@]}"
 
 [[ $# -ge 1 ]] || { echo "Error: Missing <input_path>"; print_help >&2; exit 1; }
 INPUT_PATH="$1"
-[[ -e "$INPUT_PATH" ]] || { echo "Error: '$INPUT_PATH' not found" >&2; exit 1; }
+if [[ "${INPUT_PATH}" =~ ^(gs|s3):// ]]; then :; else [[ -e "$INPUT_PATH" ]] || { echo "Error: '$INPUT_PATH' not found" >&2; exit 1; }; fi
 
 to_abs() {
-  case "$1" in
-    /*) echo "$1" ;;
-    *) echo "$PWD/${1#./}" ;;
-  esac
+  case "$1" in /*) echo "$1" ;; *) echo "$PWD/${1#./}" ;; esac
 }
-
-INPUT_PATH=$(to_abs "$INPUT_PATH")
+if [[ ! "${INPUT_PATH}" =~ ^(gs|s3):// ]]; then
+  INPUT_PATH=$(to_abs "$INPUT_PATH")
+fi
 
 if [[ $# -ge 2 && $2 =~ ^[0-9]+$ ]]; then MAX_PARALLEL_JOBS="$2"; fi
 
@@ -109,27 +108,8 @@ if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
 fi
 
-echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}"
-
-if $SINGLE_FILE && [[ -z "${OUTPUT_FILENAME:-}" ]]; then
-  if [[ -d "$INPUT_PATH" ]]; then
-    OUTPUT_FILENAME="$(basename "${INPUT_PATH%/}").$EXT"
-  else
-    OUTPUT_FILENAME="$(basename "${INPUT_PATH%.*}").$EXT"
-  fi
-fi
-
-select_clause() {
-  [[ "$COLUMNS" == "*" ]] && echo "*" || echo "$COLUMNS"
-}
-
-dedupe_select_clause() {
-  local sel; sel=$(select_clause)
-  $DEDUPE && echo "SELECT DISTINCT $sel" || echo "SELECT $sel"
-}
-
-# Get DuckDB read function for file extension
-get_duckdb_read_func() {
+# --- DuckDB table function for reading different filetypes ---
+get_duckdb_func() {
   local ext="$1"
   case "$ext" in
     parquet) echo "read_parquet" ;;
@@ -139,25 +119,68 @@ get_duckdb_read_func() {
   esac
 }
 
+cloud_secret_sql=""
+load_cloud_creds() {
+  cloud_secret_sql=""
+  local cmd="INSTALL httpfs; LOAD httpfs;"
+  if [[ -n "$GCS_KEY_ID" && -n "$GCS_SECRET" ]]; then
+    cmd="$cmd CREATE OR REPLACE SECRET gcs_creds (TYPE gcs, KEY_ID '$GCS_KEY_ID', SECRET '$GCS_SECRET');"
+  fi
+  if [[ -n "$S3_KEY_ID" && -n "$S3_SECRET" ]]; then
+    cmd="$cmd SET s3_access_key_id='$S3_KEY_ID'; SET s3_secret_access_key='$S3_SECRET';"
+  fi
+  cloud_secret_sql="$cmd"
+}
+
+find_input_files() {
+  local path="$1"
+  if [[ "$path" =~ ^gs:// ]]; then
+    duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT filename FROM list_files('$path', recursive=true);" | \
+      awk '/^gs:\/\// && (index($0,".parquet") || index($0,".csv") || index($0,".ndjson") || index($0,".jsonl") || index($0,".json"))' | sort
+  elif [[ "$path" =~ ^s3:// ]]; then
+    duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT filename FROM list_files('$path', recursive=true);" | \
+      awk '/^s3:\/\// && (index($0,".parquet") || index($0,".csv") || index($0,".ndjson") || index($0,".jsonl") || index($0,".json"))' | sort
+  else
+    find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' \) | sort
+  fi
+}
+
+select_clause() {
+  if [[ -z "${COLUMNS:-}" || "${COLUMNS// /}" == "" || "$COLUMNS" == "*" ]]; then
+    echo "*"
+  else
+    echo "$COLUMNS"
+  fi
+}
+
+dedupe_select_clause() {
+  local sel; sel=$(select_clause)
+  if [[ "$sel" == "*" ]]; then
+    $DEDUPE && echo "SELECT DISTINCT *" || echo "SELECT *"
+  else
+    $DEDUPE && echo "SELECT DISTINCT $sel" || echo "SELECT $sel"
+  fi
+}
+
+output_base_name() {
+  local file="$1"
+  local base="$(basename "$file")"
+  local outbase="${base%.*}"
+  echo "$outbase"
+}
+
 split_convert_file() {
   local infile="$1"
-  local base="$(basename "${infile%.*}")"
   local ext="${infile##*.}"
-  local duckdb_func; duckdb_func=$(get_duckdb_read_func "$ext")
+  local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+  local outbase; outbase="$(output_base_name "$infile")"
   local sel; sel=$(dedupe_select_clause)
   local row_count
   row_count=$(duckdb -c "SELECT COUNT(*) FROM $duckdb_func('$infile');" | grep -Eo '[0-9]+' | tail -1)
   local splits=$(( (row_count + ROWS_PER_FILE - 1) / ROWS_PER_FILE ))
-  local i=1
-  local offset=0
+  local i=1; local offset=0
   while (( offset < row_count )); do
-    local outbase="${base}-${i}.$EXT"
-    local out
-    if [[ -n "${OUTPUT_DIR:-}" ]]; then
-      out="$OUTPUT_DIR/$outbase"
-    else
-      out="$(dirname "$infile")/$outbase"
-    fi
+    local out="${OUTPUT_DIR:-$(dirname "$infile")}/$outbase-$i.$EXT"
     [[ -f "$out" ]] && rm -f "$out"
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     duckdb -c "COPY (
@@ -165,8 +188,7 @@ split_convert_file() {
       LIMIT $ROWS_PER_FILE OFFSET $offset
     ) TO '$out' ($COPY_OPTS);"
     echo "✅ $out"
-    ((i++))
-    ((offset+=ROWS_PER_FILE))
+    ((i++)); ((offset+=ROWS_PER_FILE))
   done
 }
 
@@ -177,15 +199,9 @@ convert_file() {
   fi
   local infile="$1"
   local ext="${infile##*.}"
-  local duckdb_func; duckdb_func=$(get_duckdb_read_func "$ext")
-  local outbase
-  outbase="$(basename "${infile%.*}").$EXT"
-  local out
-  if [[ -n "${OUTPUT_DIR:-}" ]]; then
-    out="$OUTPUT_DIR/$outbase"
-  else
-    out="$(dirname "$infile")/$outbase"
-  fi
+  local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+  local outbase; outbase="$(output_base_name "$infile")"
+  local out="${OUTPUT_DIR:-$(dirname "$infile")}/$outbase.$EXT"
   [[ -f "$out" ]] && rm -f "$out"
   local sel; sel=$(dedupe_select_clause)
   echo "Converting $infile → $out"
@@ -193,34 +209,43 @@ convert_file() {
   echo "✅ $out"
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_read_func
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name
 export EXT COPY_OPTS DEDUPE COLUMNS OUTPUT_DIR ROWS_PER_FILE
 
-if [[ -d "$INPUT_PATH" ]]; then
+load_cloud_creds
+
+echo "🚀 format=$FORMAT  cols=${COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}"
+
+if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   FILES=()
-  for ext in $SUPPORTED_EXTENSIONS; do
-    while IFS= read -r f; do FILES+=("$f"); done < <(find "$INPUT_PATH" -type f -name "*.$ext" | sort)
-  done
+  while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(find_input_files "$INPUT_PATH")
   [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
 
+  # Detect type of the first file
+  first_ext="${FILES[0]##*.}"
+  for f in "${FILES[@]}"; do
+    ext="${f##*.}"
+    [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
+  done
+  duckdb_func=$(get_duckdb_func "$first_ext")
+
   if $SINGLE_FILE; then
+    if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
+      if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
+      else
+        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%.*}")_merged.$EXT"
+      fi
+    elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* ]]; then
+      OUTPUT_FILENAME="${OUTPUT_DIR}/${OUTPUT_FILENAME}"
+    fi
     [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     SEL=$(dedupe_select_clause)
+    # Build array of file paths
     SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
-
-    # Use appropriate duckdb read function for each extension (all must match)
-    first_ext="${FILES[0]##*.}"
-    duckdb_func=$(get_duckdb_read_func "$first_ext")
-    # Check all files have the same extension
-    for f in "${FILES[@]}"; do
-      ext="${f##*.}"
-      [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
-    done
-
     echo "Merging ${#FILES[@]} files → $OUTPUT_FILENAME"
-    duckdb -c "COPY (
-      $SEL
-      FROM $duckdb_func(ARRAY[${SQL_PATHS}])
+    duckdb -c "$cloud_secret_sql COPY (
+      $SEL FROM $duckdb_func(ARRAY[$SQL_PATHS])
     ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     echo "✅ Merged → $OUTPUT_FILENAME"
   else
@@ -237,7 +262,7 @@ if [[ -d "$INPUT_PATH" ]]; then
     echo "🎉 All individual conversions complete."
   fi
 
-elif [[ -f "$INPUT_PATH" ]]; then
+elif [[ -f "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3)://.+\.(parquet|csv|json|jsonl|ndjson)$ ]]; then
   convert_file "$INPUT_PATH"
   echo "🎉 Conversion complete."
 else
