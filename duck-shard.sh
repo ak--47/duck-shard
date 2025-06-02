@@ -37,11 +37,11 @@ print_help() {
 Usage: $0 <input_path> [max_parallel_jobs] [options]
 
 Options:
-  -s, --single-file [output_filename]   Merge into one output file (optional: filename)
+  -s, --single-file [output_filename]   Merge into one output file (optional: filename or gs://...)
   -f, --format <ndjson|parquet|csv>     Output format (default: ndjson)
   -c, --cols <col1,col2,...>            Only include specific columns
   --dedupe                              Remove duplicate rows (by chosen columns)
-  -o, --output <output_dir>             Output directory (per-file mode only)
+  -o, --output <output_dir>             Output directory (local or gs://... or s3://...)
   -r, --rows <rows_per_file>            Split output files with N rows each (not for --single-file)
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
   --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
@@ -52,7 +52,7 @@ Options:
 Examples:
   $0 data/ -f csv -o ./out/
   $0 data/ -s merged.ndjson
-  $0 gs://bucket/data/ -f csv --gcs-key ... --gcs-secret ... -o ./out/
+  $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
 EOF
 }
@@ -104,13 +104,14 @@ if [[ "${INPUT_PATH}" =~ ^(gs|s3):// ]]; then :; else [[ -e "$INPUT_PATH" ]] || 
 to_abs() {
   case "$1" in /*) echo "$1" ;; *) echo "$PWD/${1#./}" ;; esac
 }
+# For local paths only, resolve to absolute
 if [[ ! "${INPUT_PATH}" =~ ^(gs|s3):// ]]; then
   INPUT_PATH=$(to_abs "$INPUT_PATH")
 fi
 
 if [[ $# -ge 2 && $2 =~ ^[0-9]+$ ]]; then MAX_PARALLEL_JOBS="$2"; fi
 
-if [[ -n "${OUTPUT_DIR:-}" ]]; then
+if [[ -n "${OUTPUT_DIR:-}" && ! "${OUTPUT_DIR}" =~ ^(gs|s3):// ]]; then
   OUTPUT_DIR=$(to_abs "$OUTPUT_DIR")
   mkdir -p "$OUTPUT_DIR"
 fi
@@ -137,7 +138,6 @@ get_duckdb_func() {
   esac
 }
 
-# This will hold the full prefix for every DuckDB -c invocation
 cloud_secret_sql=""
 load_cloud_creds() {
   if $VERBOSE; then
@@ -225,8 +225,13 @@ split_convert_file() {
   local splits=$(( (row_count + ROWS_PER_FILE - 1) / ROWS_PER_FILE ))
   local i=1; local offset=0
   while (( offset < row_count )); do
-    local out="${OUTPUT_DIR:-$(dirname "$infile")}/$outbase-$i.$EXT"
-    [[ -f "$out" ]] && rm -f "$out"
+    local out
+    if [[ -n "${OUTPUT_DIR:-}" ]]; then
+      out="${OUTPUT_DIR%/}/$outbase-$i.$EXT"
+    else
+      out="$(dirname "$infile")/$outbase-$i.$EXT"
+    fi
+    [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
       sql_stmt=$(get_sql_stmt "$SQL_FILE")
@@ -252,8 +257,13 @@ convert_file() {
   local ext="${infile##*.}"
   local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
   local outbase; outbase="$(output_base_name "$infile")"
-  local out="${OUTPUT_DIR:-$(dirname "$infile")}/$outbase.$EXT"
-  [[ -f "$out" ]] && rm -f "$out"
+  local out
+  if [[ -n "${OUTPUT_DIR:-}" ]]; then
+    out="${OUTPUT_DIR%/}/$outbase.$EXT"
+  else
+    out="$(dirname "$infile")/$outbase.$EXT"
+  fi
+  [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
@@ -290,10 +300,10 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       else
         OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%.*}")_merged.$EXT"
       fi
-    elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* ]]; then
-      OUTPUT_FILENAME="${OUTPUT_DIR}/${OUTPUT_FILENAME}"
+    elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
+      OUTPUT_FILENAME="${OUTPUT_DIR%/}/${OUTPUT_FILENAME}"
     fi
-    [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
+    [[ ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]] && [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
       sql_stmt=$(get_sql_stmt "$SQL_FILE")

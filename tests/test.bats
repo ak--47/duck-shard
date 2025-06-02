@@ -419,3 +419,103 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
     [ "$ndjson_count" -ge 1 ]
 }
+
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson -o gs://duck-shard/testData/writeHere
+@test "local parquet file > ndjson output on GCS" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
+    local out_gcs="gs://duck-shard/testData/writeHere/test-ndjson-1.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "$out_gcs"
+    [ "$status" -eq 0 ]
+    # Verify that DuckDB reports successful output to GCS (look for ✅ or output name)
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet -f parquet -o gs://duck-shard/testData/writeHere/
+@test "local parquet dir > per-file parquet output on GCS" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_dir="$TEST_DATA_DIR/parquet"
+    run "$SCRIPT_PATH" "$in_dir" -f parquet -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"gs://duck-shard/testData/writeHere"* ]]
+}
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "GCS parquet file > GCS ndjson output" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_gcs" -f ndjson -o "$out_gcs"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet -s merged-all.ndjson -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "GCS parquet dir > single merged ndjson output on GCS" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_gcs_dir="gs://duck-shard/testData/parquet"
+    local merged_gcs="gs://duck-shard/testData/writeHere/merged-all.ndjson"
+    run "$SCRIPT_PATH" "$in_gcs_dir" -s merged-all.ndjson -f ndjson -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$merged_gcs"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f parquet -o gs://duck-shard/testData/writeHere/
+@test "local CSV file > GCS parquet output" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.parquet"
+    run "$SCRIPT_PATH" "$in_file" -f parquet -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f csv -o ./tmp/
+@test "GCS parquet file > local CSV output" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
+    local expected="$TEST_OUTPUT_DIR/part-1.csv"
+    run "$SCRIPT_PATH" "$in_gcs" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet --rows 1000 -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "GCS parquet file > GCS chunked ndjson output" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
+    run "$SCRIPT_PATH" "$in_gcs" --rows 1000 -f ndjson -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"gs://duck-shard/testData/writeHere/part-1-"* ]]
+}
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "GCS parquet file > GCS ndjson using --sql" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_gcs" --sql "$sql_file" -f ndjson -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f csv -o gs://duck-shard/testData/writeHere/
+@test "local ndjson file > GCS csv output" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}

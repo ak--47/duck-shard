@@ -7,3 +7,4 @@ tmp/*
 !/tmp/.gitkeep
 .env
 service-account.json
+duckdb_init.sql

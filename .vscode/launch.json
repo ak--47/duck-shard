@@ -1,6 +1,6 @@
 {
-    "version": "0.2.0",
-    "configurations": [
+	"version": "0.2.0",
+	"configurations": [
 		{
 			"type": "bashdb",
 			"request": "launch",
@@ -9,23 +9,42 @@
 			"program": "${workspaceFolder}/parquet-to.sh",
 			"args": []
 		},
-        // {
-        //     "name": "Debug parquet-to.sh with sample data",
-        //     "type": "bashdb",
-        //     "request": "launch",
-        //     "program": "${workspaceFolder}/parquet-to.sh",
-        //     "args": ["tests/testData/eventData/events-01.parquet", "-f", "ndjson"],
-        //     "cwd": "${workspaceFolder}",
-        //     "pathBash": "/bin/bash",
-        //     "pathBashdb": "${workspaceFolder}/.vscode/bashdb/bashdb",
-        //     "pathBashdbLib": "${workspaceFolder}/.vscode/bashdb",
-        //     "pathCat": "cat",
-        //     "pathMkfifo": "mkfifo",
-        //     "pathPkill": "pkill",
-        //     "env": {},
-        //     "showDebugOutput": true,
-        //     "trace": true
-        // },
-
-    ]
+		{
+			"type": "cppdbg",
+			"request": "launch",
+			"name": "duckdb + GCS",
+			"program": "/usr/local/bin/duckdb", // <-- update this if duckdb is in a different path
+			"args": [],
+			"stopAtEntry": false,
+			"cwd": "${workspaceFolder}",
+			"environment": [
+				{
+					"name": "GCS_KEY_ID",
+					"value": "${env:GCS_KEY_ID}"
+				},
+				{
+					"name": "GCS_SECRET",
+					"value": "${env:GCS_SECRET}"
+				}
+			],
+			"console": "integratedTerminal"
+		}
+		// {
+		//     "name": "Debug parquet-to.sh with sample data",
+		//     "type": "bashdb",
+		//     "request": "launch",
+		//     "program": "${workspaceFolder}/parquet-to.sh",
+		//     "args": ["tests/testData/eventData/events-01.parquet", "-f", "ndjson"],
+		//     "cwd": "${workspaceFolder}",
+		//     "pathBash": "/bin/bash",
+		//     "pathBashdb": "${workspaceFolder}/.vscode/bashdb/bashdb",
+		//     "pathBashdbLib": "${workspaceFolder}/.vscode/bashdb",
+		//     "pathCat": "cat",
+		//     "pathMkfifo": "mkfifo",
+		//     "pathPkill": "pkill",
+		//     "env": {},
+		//     "showDebugOutput": true,
+		//     "trace": true
+		// },
+	]
 }
