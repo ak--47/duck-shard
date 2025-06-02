@@ -58,11 +58,58 @@ Where `input_path` is a single file (any supported type), a **directory** contai
 | `-o output_dir`    | Directory to place per-file outputs                |
 | `-r N`             | Split outputs with N rows per file                 |
 | `--stringify`      | Coerce all columns to string (useful for CSV/JSON) |
+| `--sql file.sql`   | Use a custom SQL SELECT for output (see below!)    |
 | `--gcs-key KEY`    | Google Cloud Storage HMAC key (see cloud section)  |
 | `--gcs-secret SEC` | Google Cloud Storage HMAC secret                   |
 | `--s3-key KEY`     | AWS S3 access key                                  |
 | `--s3-secret SEC`  | AWS S3 secret key                                  |
 | `-h`               | Print help                                         |
+
+---
+
+## 📜 Using the --sql flag
+
+Use the `--sql` flag to apply a **custom SQL transformation** to your data **before writing output**.
+
+* Your SQL file is evaluated with the source data as a DuckDB view named `input_data`.
+* Use any valid DuckDB `SELECT ... FROM input_data ...` query.
+* Columns and types will match your input file.
+
+**You can use the flag to:**
+
+* Select and rename columns
+* Filter rows (e.g. `WHERE`)
+* Transform data (e.g. casting, string ops, math)
+* Aggregate/group (e.g. `GROUP BY`, `COUNT(*)`, etc.)
+
+> **Tip:**
+> If your SQL script ends with a semicolon, that's fine!
+> `duck-shard` automatically strips trailing semicolons so you never hit DuckDB syntax errors.
+
+---
+
+### **Example SQL file**
+
+Save as `my-query.sql`:
+
+```sql
+SELECT
+  event,
+  user_id,
+  CAST(time AS VARCHAR) AS time_str
+FROM input_data
+WHERE event IS NOT NULL;
+```
+
+---
+
+### **Example usage**
+
+```bash
+./duck-shard.sh ./data/part-1.parquet --sql ./my-query.sql -f csv -o ./out/
+```
+
+This writes a CSV with only the columns and rows you want, as defined by your SQL.
 
 ---
 

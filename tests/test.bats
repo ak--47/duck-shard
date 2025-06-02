@@ -5,14 +5,22 @@
 setup() {
     export SCRIPT_PATH="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/duck-shard.sh"
     export TEST_DATA_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/testData" && pwd)"
-    export TEST_OUTPUT_DIR="$(mktemp -d)"
+    export TEST_OUTPUT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/tmp"
+	mkdir -p "$TEST_OUTPUT_DIR"
+	find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' -delete
     chmod +x "$SCRIPT_PATH"
     verify_test_data
 }
 
 teardown() {
-    [[ -n "$TEST_OUTPUT_DIR" && -d "$TEST_OUTPUT_DIR" ]] && rm -rf "$TEST_OUTPUT_DIR"
+      find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' -delete
+
 }
+
+
+
+
+
 
 verify_test_data() {
     for format in parquet csv ndjson; do
@@ -161,18 +169,6 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [ "$csv_count" -eq "$original_count" ]
 }
 
-# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --rows 1000 -f csv -o ./tmp
-@test "ndjson file > chunked csv with --rows" {
-    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
-    local base=$(basename "$in_file" .ndjson)
-    local chunk_size=1000
-    run "$SCRIPT_PATH" "$in_file" --rows "$chunk_size" -f csv -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.csv" | wc -l)
-    [ "$chunks_found" -ge 1 ]
-    for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
-}
-
 # cd ./tmp && ../duck-shard.sh ../tests/testData/parquet -s all_str.csv -f csv --stringify
 @test "parquet dir > merged single csv file with --stringify" {
     cd "$TEST_OUTPUT_DIR"
@@ -183,6 +179,22 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     run grep '\$organic' all_str.csv
     [ "$status" -eq 0 ] # value should appear as string, not fail on INT128
 }
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --rows 1000 -f csv -o ./tmp
+@test "ndjson file > chunked csv with --rows" {
+    [ "$(find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' | wc -l)" -eq 0 ]
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local chunk_size=1000
+    run timeout 60s "$SCRIPT_PATH" "$in_file" --rows "$chunk_size" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.csv" | wc -l)
+    echo "Chunks found: $chunks_found"
+    [ "$chunks_found" -ge 1 ]
+    for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
+}
+
+
 
 ##### ==== COLUMN SELECTION TEST ====
 
@@ -329,5 +341,45 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     [[ $duration -lt 60 ]]
+}
+
+
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f csv -o ./tmp
+@test "parquet file > csv output using --sql script (with semicolon)" {
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="./ex-query.sql"
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Should have headers "event,user_id,time_str" in the first row
+    run head -1 "$expected"
+    [[ "$output" =~ event ]]
+    [[ "$output" =~ user_id ]]
+    [[ "$output" =~ time_str ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/ --sql ./tests/ex-query-no-semicolon.sql -f json -o ./tmp
+@test "parquet file > ndjson output using --sql script (no semicolon)" {
+	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+	# Path to SQL file is ../ex-query.sql from $TEST_DATA_DIR
+	local base_sql="$TEST_DATA_DIR/../ex-query.sql"
+	local sql_file="$(mktemp "$TEST_OUTPUT_DIR/ex-query-no-semi-XXXXXX.sql")"
+	cp "$base_sql" "$sql_file"
+	# Remove trailing semicolon (cross-platform: macOS and GNU sed)
+	sed -i'' -e 's/;[[:space:]]*$//' "$sql_file"
+	local base=$(basename "$in_file" .parquet)
+	local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+	run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+	[ "$status" -eq 0 ]
+	file_exists_and_not_empty "$expected"
+	run head -1 "$expected"
+	[[ "$output" =~ event ]]
+	[[ "$output" =~ user_id ]]
+	[[ "$output" =~ time_str ]]
+	rm -f "$sql_file"
+
 }
 
