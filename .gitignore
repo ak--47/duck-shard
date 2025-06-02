@@ -5,3 +5,5 @@
 !/archive/.gitkeep
 tmp/*
 !/tmp/.gitkeep
+.env
+service-account.json

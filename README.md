@@ -82,9 +82,6 @@ Use the `--sql` flag to apply a **custom SQL transformation** to your data **bef
 * Transform data (e.g. casting, string ops, math)
 * Aggregate/group (e.g. `GROUP BY`, `COUNT(*)`, etc.)
 
-> **Tip:**
-> If your SQL script ends with a semicolon, that's fine!
-> `duck-shard` automatically strips trailing semicolons so you never hit DuckDB syntax errors.
 
 ---
 

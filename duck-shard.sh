@@ -2,6 +2,12 @@
 # shellcheck disable=SC2034,SC2155
 # duck-shard.sh – DuckDB-based ETL/conversion for local/cloud files, cross-platform.
 
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 set -euo pipefail
 
 command -v duckdb >/dev/null 2>&1 || {
@@ -18,11 +24,12 @@ SELECT_COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
 ROWS_PER_FILE=0
-GCS_KEY_ID=""
-GCS_SECRET=""
-S3_KEY_ID=""
-S3_SECRET=""
+GCS_KEY_ID="${GCS_KEY_ID:-}"
+GCS_SECRET="${GCS_SECRET:-}"
+S3_KEY_ID="${S3_KEY_ID:-}"
+S3_SECRET="${S3_SECRET:-}"
 SQL_FILE=""
+VERBOSE=false
 
 print_help() {
   cat <<EOF
@@ -39,6 +46,7 @@ Options:
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
   --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
   --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
+  --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
 Examples:
@@ -48,8 +56,6 @@ Examples:
   $0 data/ --sql my_query.sql -f csv -o ./out/
 EOF
 }
-
-if [[ $# -eq 0 ]]; then print_help; exit 0; fi
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -80,11 +86,16 @@ while [[ $# -gt 0 ]]; do
       S3_KEY_ID="$2"; shift 2 ;;
     --s3-secret) [[ $# -ge 2 ]] || { echo "Error: --s3-secret needs an argument"; exit 1; }
       S3_SECRET="$2"; shift 2 ;;
+    --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done
 set -- "${POSITIONAL[@]}"
+
+export GCS_KEY_ID GCS_SECRET S3_KEY_ID S3_SECRET
+
+if [[ $# -eq 0 ]]; then print_help; exit 0; fi
 
 [[ $# -ge 1 ]] || { echo "Error: Missing <input_path>"; print_help >&2; exit 1; }
 INPUT_PATH="$1"
@@ -116,7 +127,6 @@ if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
 fi
 
-# --- DuckDB table function for reading different filetypes ---
 get_duckdb_func() {
   local ext="$1"
   case "$ext" in
@@ -127,27 +137,40 @@ get_duckdb_func() {
   esac
 }
 
+# This will hold the full prefix for every DuckDB -c invocation
 cloud_secret_sql=""
 load_cloud_creds() {
-  cloud_secret_sql=""
-  local cmd="INSTALL httpfs; LOAD httpfs;"
+  if $VERBOSE; then
+    echo "Using GCS_KEY_ID=$GCS_KEY_ID"
+    echo "Using GCS_SECRET=$GCS_SECRET"
+  fi
+  cloud_secret_sql="INSTALL httpfs; LOAD httpfs;"
   if [[ -n "$GCS_KEY_ID" && -n "$GCS_SECRET" ]]; then
-    cmd="$cmd CREATE OR REPLACE SECRET gcs_creds (TYPE gcs, KEY_ID '$GCS_KEY_ID', SECRET '$GCS_SECRET');"
+    cloud_secret_sql="$cloud_secret_sql CREATE OR REPLACE SECRET gcs_creds (TYPE gcs, KEY_ID '$GCS_KEY_ID', SECRET '$GCS_SECRET');"
   fi
   if [[ -n "$S3_KEY_ID" && -n "$S3_SECRET" ]]; then
-    cmd="$cmd SET s3_access_key_id='$S3_KEY_ID'; SET s3_secret_access_key='$S3_SECRET';"
+    cloud_secret_sql="$cloud_secret_sql SET s3_access_key_id='$S3_KEY_ID'; SET s3_secret_access_key='$S3_SECRET';"
   fi
-  cloud_secret_sql="$cmd"
+}
+
+run_duckdb() {
+  local cmd="$1"
+  local final_cmd="$cloud_secret_sql $cmd"
+  if $VERBOSE; then
+    echo -e "\n[duck-shard:VERBOSE] duckdb -c \"$final_cmd\"\n"
+  fi
+  duckdb -c "$final_cmd"
 }
 
 find_input_files() {
   local path="$1"
-  if [[ "$path" =~ ^gs:// ]]; then
-    duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT filename FROM list_files('$path', recursive=true);" | \
-      awk '/^gs:\/\// && (index($0,".parquet") || index($0,".csv") || index($0,".ndjson") || index($0,".jsonl") || index($0,".json"))' | sort
-  elif [[ "$path" =~ ^s3:// ]]; then
-    duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT filename FROM list_files('$path', recursive=true);" | \
-      awk '/^s3:\/\// && (index($0,".parquet") || index($0,".csv") || index($0,".ndjson") || index($0,".jsonl") || index($0,".json"))' | sort
+  if [[ "$path" =~ ^gs:// || "$path" =~ ^s3:// ]]; then
+    if [[ "$path" =~ \.(parquet|csv|ndjson|jsonl|json)$ ]]; then
+      echo "$path"
+    else
+      run_duckdb "SELECT filename FROM list_files('$path', recursive=true);" | \
+        awk '/^gs:\/\// || /^s3:\/\// {if (match($0, /\.(parquet|csv|ndjson|jsonl|json)$/)) print $0}' | sort
+    fi
   else
     find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' \) | sort
   fi
@@ -172,12 +195,16 @@ dedupe_select_clause() {
 
 output_base_name() {
   local file="$1"
+  # If input ends with * (glob), make output name "merged"
+  if [[ "$file" == *'*'* ]]; then
+    echo "merged"
+    return
+  fi
   local base="$(basename "$file")"
   local outbase="${base%.*}"
   echo "$outbase"
 }
 
-# --- Helper: strip all trailing semicolons and whitespace from SQL file ---
 get_sql_stmt() {
   cat "$1" | sed -e 's/[[:space:]]*$//' -e ':a' -e 's/;$//;ta' -e 's/[[:space:]]*$//'
 }
@@ -190,10 +217,10 @@ split_convert_file() {
   local row_count
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
-    row_count=$(duckdb -c "CREATE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); SELECT COUNT(*) FROM ( $sql_stmt );" | grep -Eo '[0-9]+' | tail -1)
+    row_count=$(run_duckdb "CREATE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); SELECT COUNT(*) FROM ( $sql_stmt );" | grep -Eo '[0-9]+' | tail -1)
   else
     local sel; sel=$(dedupe_select_clause)
-    row_count=$(duckdb -c "SELECT COUNT(*) FROM $duckdb_func('$infile');" | grep -Eo '[0-9]+' | tail -1)
+    row_count=$(run_duckdb "SELECT COUNT(*) FROM $duckdb_func('$infile');" | grep -Eo '[0-9]+' | tail -1)
   fi
   local splits=$(( (row_count + ROWS_PER_FILE - 1) / ROWS_PER_FILE ))
   local i=1; local offset=0
@@ -203,10 +230,10 @@ split_convert_file() {
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
       sql_stmt=$(get_sql_stmt "$SQL_FILE")
-      duckdb -c "$cloud_secret_sql CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt LIMIT $ROWS_PER_FILE OFFSET $offset ) TO '$out' ($COPY_OPTS);"
+      run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt LIMIT $ROWS_PER_FILE OFFSET $offset ) TO '$out' ($COPY_OPTS);"
     else
       local sel; sel=$(dedupe_select_clause)
-      duckdb -c "COPY (
+      run_duckdb "COPY (
         $sel FROM $duckdb_func('$infile')
         LIMIT $ROWS_PER_FILE OFFSET $offset
       ) TO '$out' ($COPY_OPTS);"
@@ -230,15 +257,15 @@ convert_file() {
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
-    duckdb -c "$cloud_secret_sql CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt ) TO '$out' ($COPY_OPTS);"
+    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt ) TO '$out' ($COPY_OPTS);"
   else
     local sel; sel=$(dedupe_select_clause)
-    duckdb -c "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
+    run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb
 
 load_cloud_creds
 
@@ -249,7 +276,6 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(find_input_files "$INPUT_PATH")
   [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
 
-  # Detect type of the first file
   first_ext="${FILES[0]##*.}"
   for f in "${FILES[@]}"; do
     ext="${f##*.}"
@@ -269,23 +295,22 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
     [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then
-      # Build array of file paths for the input
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
       sql_stmt=$(get_sql_stmt "$SQL_FILE")
       echo "Merging ${#FILES[@]} files → $OUTPUT_FILENAME"
-      duckdb -c "$cloud_secret_sql CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func(ARRAY[$SQL_PATHS]); COPY ( $sql_stmt ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func(ARRAY[$SQL_PATHS]); COPY ( $sql_stmt ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     else
       SEL=$(dedupe_select_clause)
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
       echo "Merging ${#FILES[@]} files → $OUTPUT_FILENAME"
-      duckdb -c "$cloud_secret_sql COPY (
+      run_duckdb "COPY (
         $SEL FROM $duckdb_func(ARRAY[$SQL_PATHS])
       ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi

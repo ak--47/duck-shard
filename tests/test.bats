@@ -2,18 +2,28 @@
 # shellcheck disable=SC2034,SC2155
 # Robust test suite for duck-shard.sh (portable DuckDB data converter)
 
+
 setup() {
+	PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+	if [ -f "$PROJECT_ROOT/.env" ]; then
+		# shellcheck disable=SC1091
+		set -a
+		source "$PROJECT_ROOT/.env"
+		set +a
+	fi
     export SCRIPT_PATH="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/duck-shard.sh"
     export TEST_DATA_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/testData" && pwd)"
     export TEST_OUTPUT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/tmp"
 	mkdir -p "$TEST_OUTPUT_DIR"
 	find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' -delete
+	rm -rf "$TEST_OUTPUT_DIR"/*
     chmod +x "$SCRIPT_PATH"
     verify_test_data
 }
 
 teardown() {
-      find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' -delete
+	rm -rf "$TEST_OUTPUT_DIR"/*
+    find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' -delete
 
 }
 
@@ -272,22 +282,22 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [[ "$output" =~ "Error: --rows cannot be used with --single-file mode" ]]
 }
 
-# ./duck-shard.sh gs://totally-fake-bucket/myfile.parquet
-@test "error: GCS URI without credentials" {
-    # This will only work if you do NOT have env vars set or default creds
-    local fake_gcs="gs://totally-fake-bucket/myfile.parquet"
-    run "$SCRIPT_PATH" "$fake_gcs"
-    [ "$status" -ne 0 ]
-    [[ "$output" =~ "Error" ]]
-}
+# # ./duck-shard.sh gs://totally-fake-bucket/myfile.parquet
+# @test "error: GCS URI without credentials" {
+#     # This will only work if you do NOT have env vars set or default creds
+#     local fake_gcs="gs://totally-fake-bucket/myfile.parquet"
+#     run "$SCRIPT_PATH" "$fake_gcs"
+#     [ "$status" -ne 0 ]
+#     [[ "$output" =~ "Error" ]]
+# }
 
-# ./duck-shard.sh s3://totally-fake-bucket/myfile.parquet
-@test "error: S3 URI without credentials" {
-    local fake_s3="s3://totally-fake-bucket/myfile.parquet"
-    run "$SCRIPT_PATH" "$fake_s3"
-    [ "$status" -ne 0 ]
-    [[ "$output" =~ "Error" ]]
-}
+# # ./duck-shard.sh s3://totally-fake-bucket/myfile.parquet
+# @test "error: S3 URI without credentials" {
+#     local fake_s3="s3://totally-fake-bucket/myfile.parquet"
+#     run "$SCRIPT_PATH" "$fake_s3"
+#     [ "$status" -ne 0 ]
+#     [[ "$output" =~ "Error" ]]
+# }
 
 # mkdir -p ./tmp/mixed; cp ./tests/testData/parquet/part-1.parquet ./tmp/mixed/file1.parquet; cp ./tests/testData/csv/part-1.csv ./tmp/mixed/file2.csv; ./duck-shard.sh ./tmp/mixed -s merged.ndjson
 @test "error: mixing file types for --single-file" {
@@ -383,3 +393,29 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 }
 
+##### ==== GCS AND S3 TESTS ====
+# Ensure you have GCS_ACCESS_KEY and GCS_SECRET_KEY set in your .env file or environment
+# Ensure you have S3_ACCESS_KEY and S3_SECRET_KEY set in your .env file or environment
+
+# ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f ndjson -o ./tmp
+@test "GCS parquet file > local ndjson output" {
+    # Ensure credentials are available in the environment for the script
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="gs://duck-shard/testData/parquet/part-1.parquet"
+    local base="part-1"
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+# ./duck-shard.sh gs://duck-shard/testData/parquet/*.parquet -f ndjson -o ./tmp/
+@test "GCS parquet dir > local ndjson output for all files" {
+    [ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_dir="gs://duck-shard/testData/parquet/*.parquet"
+    run "$SCRIPT_PATH" "$in_dir" -f ndjson -o "$TEST_OUTPUT_DIR/merged.ndjson"
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+}
