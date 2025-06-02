@@ -3,7 +3,7 @@ class DuckShard < Formula
   homepage "https://github.com/ak--47/duck-shard"
   url "https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh"
   version "main"
-  sha256 "9e001f7d7d42474bd706deb10c6d8b31d9f0d7c551fa35a4dfbdd1df1243019c" # Will be set by GitHub Action!
+  sha256 "5cfc8b353db9bdb2fd53f5cba870d03185d3a549f02ff4eceec89306dbf65aaf" # Will be set by GitHub Action!
   license "MIT"
 
   depends_on "duckdb"
