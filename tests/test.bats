@@ -519,3 +519,117 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"$out_gcs"* ]]
 }
+
+##### ==== FILE NAMING TESTS ====
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson
+@test "single file conversion without -o uses source directory" {
+    local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
+    local expected_out="$TEST_DATA_DIR/parquet/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+    rm -f "$expected_out"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet -s -f ndjson
+@test "single file merge without -o uses source directory" {
+    local in_dir="$TEST_DATA_DIR/parquet"
+    local expected_out="$TEST_DATA_DIR/parquet/parquet_merged.ndjson"
+    run "$SCRIPT_PATH" "$in_dir" -s -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+    rm -f "$expected_out"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet -s custom_name.ndjson -f ndjson
+@test "single file merge with specific filename without -o uses source directory" {
+    local in_dir="$TEST_DATA_DIR/parquet"
+    local expected_out="$TEST_DATA_DIR/parquet/custom_name.ndjson"
+    run "$SCRIPT_PATH" "$in_dir" -s custom_name.ndjson -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+    rm -f "$expected_out"
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f csv
+@test "prevents overwriting source file when converting to same format in same directory" {
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Error: Output file"* ]]
+    [[ "$output" == *"would overwrite input file"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f ndjson -r 100
+@test "prevents overwriting source file in split mode" {
+    local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -r 100
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Error: Output file"* ]]
+    [[ "$output" == *"would overwrite input file"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f csv -o ./tmp/
+@test "allows same format conversion when -o is specified" {
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    local expected_out="$TEST_OUTPUT_DIR/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+}
+
+# ./duck-shard.sh ./tmp/no_extension -f ndjson
+@test "handles files without extensions properly" {
+    local test_file="$TEST_OUTPUT_DIR/no_extension"
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    local expected_out="$TEST_OUTPUT_DIR/no_extension.ndjson"
+    
+    # Copy a test file without extension
+    cp "$in_file" "$test_file"
+    
+    run "$SCRIPT_PATH" "$test_file" -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+}
+
+# ./duck-shard.sh ./tmp/data.backup.csv -f ndjson
+@test "handles files with multiple dots properly" {
+    local test_file="$TEST_OUTPUT_DIR/data.backup.csv"
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    local expected_out="$TEST_OUTPUT_DIR/data.backup.ndjson"
+    
+    # Copy a test file with multiple dots
+    cp "$in_file" "$test_file"
+    
+    run "$SCRIPT_PATH" "$test_file" -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+}
+
+# ./duck-shard.sh ./tmp/data*special.csv -f ndjson
+@test "handles filenames with asterisks properly" {
+    local test_file="$TEST_OUTPUT_DIR/data*special.csv"
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    local expected_out="$TEST_OUTPUT_DIR/data*special.ndjson"
+    
+    # Copy a test file with asterisk in name
+    cp "$in_file" "$test_file"
+    
+    run "$SCRIPT_PATH" "$test_file" -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+}
+
+# ./duck-shard.sh ./tmp/subdir -s -f ndjson
+@test "directory merge without -o uses directory itself as output location" {
+    # Create a temporary subdirectory for this test
+    local temp_dir="$TEST_OUTPUT_DIR/subdir"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    
+    local expected_out="$temp_dir/subdir_merged.ndjson"
+    run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected_out"
+}

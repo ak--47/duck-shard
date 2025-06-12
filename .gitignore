@@ -8,3 +8,4 @@ tmp/*
 .env
 service-account.json
 duckdb_init.sql
+.claude

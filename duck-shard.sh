@@ -168,8 +168,11 @@ find_input_files() {
     if [[ "$path" =~ \.(parquet|csv|ndjson|jsonl|json)$ ]]; then
       echo "$path"
     else
-      run_duckdb "SELECT filename FROM list_files('$path', recursive=true);" | \
-        awk '/^gs:\/\// || /^s3:\/\// {if (match($0, /\.(parquet|csv|ndjson|jsonl|json)$/)) print $0}' | sort
+      # Use glob to find files in cloud storage
+      for ext in parquet csv ndjson jsonl json; do
+        run_duckdb "COPY (SELECT file FROM glob('${path%/}/*.$ext')) TO '/dev/stdout' (FORMAT CSV, HEADER false);" | \
+          grep -E "^(gs|s3)://"
+      done | sort
     fi
   else
     find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' \) | sort
@@ -195,11 +198,6 @@ dedupe_select_clause() {
 
 output_base_name() {
   local file="$1"
-  # If input ends with * (glob), make output name "merged"
-  if [[ "$file" == *'*'* ]]; then
-    echo "merged"
-    return
-  fi
   local base="$(basename "$file")"
   local outbase="${base%.*}"
   echo "$outbase"
@@ -207,6 +205,28 @@ output_base_name() {
 
 get_sql_stmt() {
   cat "$1" | sed -e 's/[[:space:]]*$//' -e ':a' -e 's/;$//;ta' -e 's/[[:space:]]*$//'
+}
+
+check_output_safety() {
+  local infile="$1"
+  local outfile="$2"
+  
+  # Skip check for cloud storage paths
+  if [[ "$infile" =~ ^(gs|s3):// || "$outfile" =~ ^(gs|s3):// ]]; then
+    return 0
+  fi
+  
+  # Convert to absolute paths for comparison
+  local abs_infile abs_outfile
+  abs_infile=$(to_abs "$infile")
+  abs_outfile=$(to_abs "$outfile")
+  
+  if [[ "$abs_infile" == "$abs_outfile" ]]; then
+    echo "Error: Output file '$outfile' would overwrite input file '$infile'" >&2
+    echo "Use -o flag to specify a different output directory" >&2
+    return 1
+  fi
+  return 0
 }
 
 split_convert_file() {
@@ -231,6 +251,12 @@ split_convert_file() {
     else
       out="$(dirname "$infile")/$outbase-$i.$EXT"
     fi
+    
+    # Safety check to prevent overwriting source file
+    if ! check_output_safety "$infile" "$out"; then
+      return 1
+    fi
+    
     [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
@@ -263,6 +289,12 @@ convert_file() {
   else
     out="$(dirname "$infile")/$outbase.$EXT"
   fi
+  
+  # Safety check to prevent overwriting source file
+  if ! check_output_safety "$infile" "$out"; then
+    return 1
+  fi
+  
   [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
@@ -275,7 +307,7 @@ convert_file() {
   echo "✅ $out"
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs
 
 load_cloud_creds
 
@@ -295,10 +327,29 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
 
   if $SINGLE_FILE; then
     if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
-      if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
-        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
+      # Determine default output directory - use source directory when OUTPUT_DIR not specified
+      default_output_dir=""
+      if [[ -n "${OUTPUT_DIR:-}" ]]; then
+        default_output_dir="${OUTPUT_DIR}"
+      elif [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+        if [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+          default_output_dir="$(dirname "$INPUT_PATH")"
+        else
+          default_output_dir="$INPUT_PATH"
+        fi
       else
-        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%.*}")_merged.$EXT"
+        default_output_dir="$(dirname "$INPUT_PATH")"
+      fi
+      
+      if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+        OUTPUT_FILENAME="${default_output_dir%/}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
+      else
+        base_name="$(basename "$INPUT_PATH")"
+        # Handle files without extensions or with multiple dots properly
+        if [[ "$base_name" == *.* ]]; then
+          base_name="${base_name%.*}"
+        fi
+        OUTPUT_FILENAME="${default_output_dir%/}/${base_name}_merged.$EXT"
       fi
     elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
       OUTPUT_FILENAME="${OUTPUT_DIR%/}/${OUTPUT_FILENAME}"
