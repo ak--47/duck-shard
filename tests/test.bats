@@ -1143,3 +1143,6 @@ safe_cleanup_output_dir_alternative
 #         echo "⏭️  Skipping GCS cleanup - no credentials available"
 #     fi
 # }
+
+@teardown
+make clean
