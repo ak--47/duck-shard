@@ -275,7 +275,7 @@ log_http_response() {
   local http_code="$3"
   local response="$4"
   local duration="$5"
-  
+
   if [[ "$LOG_RESPONSES" == "true" ]]; then
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local log_entry=$(cat <<EOF
@@ -305,23 +305,23 @@ post_file_to_url() {
   local url="$2"
   local max_retries=3
   local retry_count=0
-  
+
   # Initialize HTTP tracking on first call
   if [[ -z "$HTTP_START_TIME" ]]; then
     HTTP_START_TIME=$(date +%s)
     HTTP_REQUEST_COUNT=0
     HTTP_RECORD_COUNT=0
   fi
-  
+
   # Check if curl is available
   command -v curl >/dev/null 2>&1 || {
     echo "Error: curl not found. curl is required for --url functionality" >&2
     return 1
   }
-  
+
   # Build curl command with headers
   local curl_args=("-X" "POST" "-f" "-s" "-S" "--connect-timeout" "10" "--max-time" "30")
-  
+
   # Reconstruct HTTP_HEADERS array from exported variables (for subprocesses)
   local headers=()
   if [[ -n "${HTTP_HEADERS_COUNT:-}" ]]; then
@@ -333,7 +333,7 @@ post_file_to_url() {
     # Direct access to array (when not in subprocess)
     headers=("${HTTP_HEADERS[@]}")
   fi
-  
+
   # Add custom headers or default Content-Type
   local has_content_type=false
   for header in "${headers[@]}"; do
@@ -342,45 +342,45 @@ post_file_to_url() {
       has_content_type=true
     fi
   done
-  
+
   # Add default Content-Type if not specified
   if [[ "$has_content_type" == "false" ]]; then
     curl_args+=("-H" "Content-Type: application/json")
   fi
-  
+
   # Add the data file
   curl_args+=("--data-binary" "@$file" "$url")
-  
+
   # Count records in file for throughput calculation
   local record_count=0
   if [[ -f "$file" ]]; then
     record_count=$(wc -l < "$file" 2>/dev/null || echo 0)
   fi
-  
+
   while (( retry_count < max_retries )); do
     local http_code
     local response
     local start_time=$(date +%s)
-    
-    # Run curl and capture both output and HTTP status code  
+
+    # Run curl and capture both output and HTTP status code
     response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null || echo "000curl_failed")
-    
+
     if [[ "$response" != "000curl_failed" && -n "$response" ]]; then
       local end_time=$(date +%s)
       local duration=$((end_time - start_time))
-      
+
       http_code="${response: -3}"  # Last 3 characters
       response="${response%???}"   # Everything except last 3 characters
-      
+
       # Log response if requested
       log_http_response "$file" "$url" "$http_code" "$response" "$duration"
-      
+
       case "$http_code" in
-        2??) 
+        2??)
           # Update counters for throughput
           ((HTTP_REQUEST_COUNT++))
           HTTP_RECORD_COUNT=$((HTTP_RECORD_COUNT + record_count))
-          
+
           # Calculate and display throughput
           local elapsed=$(($(date +%s) - HTTP_START_TIME))
           if (( elapsed > 0 )); then
@@ -393,7 +393,7 @@ post_file_to_url() {
           else
             echo "✅ Posted $(basename "$file") to $url (HTTP $http_code)"
           fi
-          
+
           if $VERBOSE && [[ -n "$response" ]]; then
             echo "Response: $response"
           fi
@@ -444,7 +444,7 @@ post_file_to_url() {
       fi
     fi
   done
-  
+
   echo "❌ Failed to post $file to $url after $max_retries attempts" >&2
   return 1
 }
@@ -489,14 +489,14 @@ split_convert_file() {
         LIMIT $ROWS_PER_FILE OFFSET $offset
       ) TO '$out' ($COPY_OPTS);"
     fi
-    echo "✅ $out"
-    
+    echo -e "\n✅ $out\n"
+
     # POST to URL if specified
     if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
       post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
     fi
-    
+
     ((i++)); ((offset+=ROWS_PER_FILE))
   done
 }
@@ -532,7 +532,7 @@ convert_file() {
     run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
-  
+
   # POST to URL if specified
   if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
     sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
@@ -544,7 +544,7 @@ export -f convert_file split_convert_file dedupe_select_clause select_clause get
 
 load_cloud_creds
 
-echo "🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}"
+echo -e "\n🦆  DUCK SHARD JOB START\n🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}\n"
 
 if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   FILES=()
@@ -603,7 +603,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
-    
+
     # POST to URL if specified for merged file
     if [[ -n "$POST_URL" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
@@ -618,15 +618,15 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     done
     export HTTP_HEADERS_COUNT="${#HTTP_HEADERS[@]}"
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
-    echo "🎉 All individual conversions complete."
+    echo -e "\n🎉 All individual conversions complete.\n"
   fi
 
 elif [[ -f "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3)://.+\.(parquet|csv|json|jsonl|ndjson)$ ]]; then
   convert_file "$INPUT_PATH"
-  echo "🎉 Conversion complete."
+  echo -e "\n🎉 Conversion complete.\n"
 else
   echo "Error: '$INPUT_PATH' is not a supported file or directory" >&2
   exit 1
 fi
 
-echo "💯 Done!"
+echo -e "\n🦆DUCK SHARD JOB 💯 DONE\n"
