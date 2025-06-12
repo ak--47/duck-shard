@@ -34,6 +34,14 @@ VERBOSE=false
 print_help() {
   cat <<EOF
 
+     ██████╗ ██╗   ██╗ ██████╗██╗  ██╗      ███████╗██╗  ██╗ █████╗ ██████╗ ██████╗
+     ██╔══██╗██║   ██║██╔════╝██║ ██╔╝      ██╔════╝██║  ██║██╔══██╗██╔══██╗██╔══██╗
+     ██║  ██║██║   ██║██║     █████╔╝ █████╗███████╗███████║███████║██████╔╝██║  ██║
+     ██║  ██║██║   ██║██║     ██╔═██╗ ╚════╝╚════██║██╔══██║██╔══██║██╔══██╗██║  ██║
+     ██████╔╝╚██████╔╝╚██████╗██║  ██╗      ███████║██║  ██║██║  ██║██║  ██║██████╔╝
+     ╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝      ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝
+            by AK
+
 Usage: $0 <input_path> [max_parallel_jobs] [options]
 
 Options:
@@ -54,6 +62,8 @@ Examples:
   $0 data/ -s merged.ndjson
   $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
+
+
 EOF
 }
 
@@ -210,17 +220,17 @@ get_sql_stmt() {
 check_output_safety() {
   local infile="$1"
   local outfile="$2"
-  
+
   # Skip check for cloud storage paths
   if [[ "$infile" =~ ^(gs|s3):// || "$outfile" =~ ^(gs|s3):// ]]; then
     return 0
   fi
-  
+
   # Convert to absolute paths for comparison
   local abs_infile abs_outfile
   abs_infile=$(to_abs "$infile")
   abs_outfile=$(to_abs "$outfile")
-  
+
   if [[ "$abs_infile" == "$abs_outfile" ]]; then
     echo "Error: Output file '$outfile' would overwrite input file '$infile'" >&2
     echo "Use -o flag to specify a different output directory" >&2
@@ -251,12 +261,12 @@ split_convert_file() {
     else
       out="$(dirname "$infile")/$outbase-$i.$EXT"
     fi
-    
+
     # Safety check to prevent overwriting source file
     if ! check_output_safety "$infile" "$out"; then
       return 1
     fi
-    
+
     [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
@@ -289,12 +299,12 @@ convert_file() {
   else
     out="$(dirname "$infile")/$outbase.$EXT"
   fi
-  
+
   # Safety check to prevent overwriting source file
   if ! check_output_safety "$infile" "$out"; then
     return 1
   fi
-  
+
   [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
@@ -339,7 +349,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     else
       default_output_dir="$(dirname "$INPUT_PATH")"
     fi
-    
+
     if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
       if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         OUTPUT_FILENAME="${default_output_dir%/}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
