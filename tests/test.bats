@@ -604,7 +604,7 @@ safe_cleanup_output_dir_alternative
 	local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
     local expected_out="$temp_dir/test_parquet_dir_merged.ndjson"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
     [ "$status" -eq 0 ]
@@ -617,7 +617,7 @@ safe_cleanup_output_dir_alternative
 	local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
     local expected_out="$temp_dir/custom_name.ndjson"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     run "$SCRIPT_PATH" "$temp_dir" -s custom_name.ndjson -f ndjson
     [ "$status" -eq 0 ]
@@ -710,7 +710,7 @@ safe_cleanup_output_dir_alternative
 	# Create a temporary subdirectory for this test
     local temp_dir="$TEST_OUTPUT_DIR/subdir"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     local expected_out="$temp_dir/subdir_merged.ndjson"
     run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
@@ -968,7 +968,7 @@ safe_cleanup_output_dir_alternative
     local output_file="$TEST_OUTPUT_DIR/$base.csv"
     file_exists_and_not_empty "$output_file"
     # Check that complex values are stringified
-    run grep '\\$organic' "$output_file"
+    run grep "\$organic" "$output_file"
     [ "$status" -eq 0 ]
 }
 
@@ -1129,3 +1129,17 @@ safe_cleanup_output_dir_alternative
     [ "$status" -eq 1 ]
     [[ "$output" == *"Error: --url cannot be used with cloud storage output directories"* ]]
 }
+
+##### ==== CLEANUP ====
+
+# Global cleanup to remove test data from GCS writeHere directory
+# @test "cleanup: remove test data from GCS writeHere directory" {
+#     # Only run cleanup if we have GCS credentials
+#     if [[ -n "${GCS_KEY_ID:-}" && -n "${GCS_SECRET:-}" ]]; then
+#         # Clean up the writeHere directory, but don't fail if it doesn't work
+#         gsutil -m rm -rf gs://duck-shard/testData/writeHere/* 2>/dev/null || true
+#         echo "✅ GCS writeHere directory cleanup completed (or skipped if empty)"
+#     else
+#         echo "⏭️  Skipping GCS cleanup - no credentials available"
+#     fi
+# }

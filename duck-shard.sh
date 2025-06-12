@@ -305,6 +305,7 @@ post_file_to_url() {
   local url="$2"
   local max_retries=3
   local retry_count=0
+  local last_http_code=""
 
   # Initialize HTTP tracking on first call
   if [[ -z "$HTTP_START_TIME" ]]; then
@@ -370,6 +371,7 @@ post_file_to_url() {
       local duration=$((end_time - start_time))
 
       http_code="${response: -3}"  # Last 3 characters
+      last_http_code="$http_code"  # Track for final error message
       response="${response%???}"   # Everything except last 3 characters
 
       # Log response if requested
@@ -445,7 +447,11 @@ post_file_to_url() {
     fi
   done
 
-  echo "❌ Failed to post $file to $url after $max_retries attempts" >&2
+  if [[ -n "$last_http_code" ]]; then
+    echo "❌ Failed to post $file to $url after $max_retries attempts (last HTTP status: $last_http_code)" >&2
+  else
+    echo "❌ Failed to post $file to $url after $max_retries attempts (network error)" >&2
+  fi
   return 1
 }
 

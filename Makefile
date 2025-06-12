@@ -73,6 +73,7 @@ clean:
 	@find ./tmp -type f ! -name '.gitkeep' -exec rm -f {} + 2>/dev/null || true
 	@rm -f ./tests/response-logs.json 2>/dev/null || true
 	@rm -f ./response-logs.json 2>/dev/null || true
+	@find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
 # Quick test for CI/CD
