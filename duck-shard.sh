@@ -33,6 +33,9 @@ VERBOSE=false
 POST_URL=""
 HTTP_HEADERS=()
 HTTP_RATE_LIMIT_DELAY=0.1  # seconds between requests
+LOG_RESPONSES=false
+RESPONSE_LOG_FILE="response-logs.json"
+HTTP_START_TIME=""
 
 print_help() {
   cat <<EOF
@@ -59,6 +62,7 @@ Options:
   --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
   --url <api_url>                       POST processed data to API URL in batches
   --header <header>                     Add custom HTTP header (can be used multiple times)
+  --log                                 Log HTTP responses to response-logs.json
   --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
@@ -106,6 +110,7 @@ while [[ $# -gt 0 ]]; do
       POST_URL="$2"; shift 2 ;;
     --header) [[ $# -ge 2 ]] || { echo "Error: --header needs an argument"; exit 1; }
       HTTP_HEADERS+=("$2"); shift 2 ;;
+    --log) LOG_RESPONSES=true; shift ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -264,11 +269,49 @@ check_output_safety() {
   return 0
 }
 
+log_http_response() {
+  local file="$1"
+  local url="$2"
+  local http_code="$3"
+  local response="$4"
+  local duration="$5"
+  
+  if [[ "$LOG_RESPONSES" == "true" ]]; then
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local log_entry=$(cat <<EOF
+{
+  "timestamp": "$timestamp",
+  "file": "$file",
+  "url": "$url",
+  "http_code": $http_code,
+  "response": $(echo "$response" | jq -R . 2>/dev/null || echo "\"$response\""),
+  "duration_ms": $duration
+}
+EOF
+)
+    # Append to log file with proper JSON array formatting
+    if [[ ! -f "$RESPONSE_LOG_FILE" ]]; then
+      echo "[$log_entry]" > "$RESPONSE_LOG_FILE"
+    else
+      # Remove last ] and add new entry
+      sed -i '$ s/]$//' "$RESPONSE_LOG_FILE" 2>/dev/null || sed -i '' '$ s/]$//' "$RESPONSE_LOG_FILE" 2>/dev/null
+      echo ",$log_entry]" >> "$RESPONSE_LOG_FILE"
+    fi
+  fi
+}
+
 post_file_to_url() {
   local file="$1"
   local url="$2"
   local max_retries=3
   local retry_count=0
+  
+  # Initialize HTTP tracking on first call
+  if [[ -z "$HTTP_START_TIME" ]]; then
+    HTTP_START_TIME=$(date +%s)
+    HTTP_REQUEST_COUNT=0
+    HTTP_RECORD_COUNT=0
+  fi
   
   # Check if curl is available
   command -v curl >/dev/null 2>&1 || {
@@ -308,18 +351,47 @@ post_file_to_url() {
   # Add the data file
   curl_args+=("--data-binary" "@$file" "$url")
   
+  # Count records in file for throughput calculation
+  local record_count=0
+  if [[ -f "$file" ]]; then
+    record_count=$(wc -l < "$file" 2>/dev/null || echo 0)
+  fi
+  
   while (( retry_count < max_retries )); do
     local http_code
     local response
+    local start_time=$(date +%s)
     
     # Run curl and capture both output and HTTP status code
     if response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null); then
+      local end_time=$(date +%s)
+      local duration=$((end_time - start_time))
+      
       http_code="${response: -3}"  # Last 3 characters
       response="${response%???}"   # Everything except last 3 characters
       
+      # Log response if requested
+      log_http_response "$file" "$url" "$http_code" "$response" "$duration"
+      
       case "$http_code" in
         2??) 
-          echo "✅ Posted $file to $url (HTTP $http_code)"
+          # Update counters for throughput
+          ((HTTP_REQUEST_COUNT++))
+          HTTP_RECORD_COUNT=$((HTTP_RECORD_COUNT + record_count))
+          
+          # Calculate and display throughput
+          local elapsed=$(($(date +%s) - HTTP_START_TIME))
+          if (( elapsed > 0 )); then
+            local req_per_sec=$(( HTTP_REQUEST_COUNT * 100 / elapsed ))  # *100 for 2 decimal precision
+            local rec_per_sec=$(( HTTP_RECORD_COUNT * 100 / elapsed ))
+            printf "✅ Posted %s to %s (HTTP %s) | %d.%02d req/s, %d.%02d rec/s\n" \
+              "$(basename "$file")" "$url" "$http_code" \
+              $((req_per_sec / 100)) $((req_per_sec % 100)) \
+              $((rec_per_sec / 100)) $((rec_per_sec % 100))
+          else
+            echo "✅ Posted $(basename "$file") to $url (HTTP $http_code)"
+          fi
+          
           if $VERBOSE && [[ -n "$response" ]]; then
             echo "Response: $response"
           fi
@@ -333,7 +405,7 @@ post_file_to_url() {
           ;;
         *)
           ((retry_count++))
-          echo "❌ HTTP $http_code error posting $file to $url (attempt $retry_count/$max_retries)"
+          echo "❌ HTTP $http_code error posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
           if $VERBOSE && [[ -n "$response" ]]; then
             echo "Response: $response"
           fi
@@ -446,7 +518,7 @@ convert_file() {
   fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response
 
 load_cloud_creds
 
@@ -517,7 +589,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"

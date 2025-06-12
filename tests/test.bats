@@ -702,6 +702,29 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [[ "$output" == *"Failed to post"* ]]
 }
 
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./ex-query.sql --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp -r 1000
+@test "SQL transform > POST to URL" {
+    local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
+    local sql_file="$PROJECT_ROOT/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "part-1-*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" == *"✅ Posted"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --log -r 1000 -f ndjson -o ./tmp
+@test "POST with logging creates response-logs.json" {
+    rm -f response-logs.json  # Clean up any existing log
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --log -r 1000 -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✅ Posted"* ]]
+    [ -f "response-logs.json" ]
+    # Check that log contains JSON
+    run jq length response-logs.json
+    [ "$status" -eq 0 ]
+}
+
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o gs://bucket/
 @test "error: --url with cloud storage output should fail" {
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "gs://bucket/"
