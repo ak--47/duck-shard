@@ -643,3 +643,68 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
 }
+
+##### ==== HTTP POST TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp -r 1000
+@test "single file > POST to URL" {
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
+    [ "$status" -eq 0 ]
+    # Should create multiple batch files and post each one
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "part-1-*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" == *"✅ Posted"* ]]
+    [[ "$output" == *"https://eop7f8y0fywsefw.m.pipedream.net"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --url https://eop7f8y0fywsefw.m.pipedream.net --header "X-Custom: test" -f ndjson -o ./tmp -r 1000
+@test "single file > POST to URL with custom header" {
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "X-Custom: test" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "part-1-*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" == *"✅ Posted"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net -r 500 -f ndjson -o ./tmp
+@test "directory > batched POST to URL" {
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -r 500 -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Should create multiple batch files and post each one
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" == *"✅ Posted"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv -s merged.ndjson --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp
+@test "merged single file > POST to URL" {
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
+    [[ "$output" == *"✅ Posted"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o ./tmp
+@test "directory > POST to URL with multiple headers" {
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✅ Posted"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv --url https://invalid-domain-that-should-fail.nonexistent -f ndjson -o ./tmp
+@test "error: invalid URL should fail with retries" {
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://invalid-domain-that-should-fail.nonexistent" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]  # File conversion should succeed
+    # But POST should fail and show retry attempts
+    [[ "$output" == *"❌"* ]]
+    [[ "$output" == *"Failed to post"* ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o gs://bucket/
+@test "error: --url with cloud storage output should fail" {
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "gs://bucket/"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Error: --url cannot be used with cloud storage output directories"* ]]
+}

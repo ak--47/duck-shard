@@ -30,6 +30,9 @@ S3_KEY_ID="${S3_KEY_ID:-}"
 S3_SECRET="${S3_SECRET:-}"
 SQL_FILE=""
 VERBOSE=false
+POST_URL=""
+HTTP_HEADERS=()
+HTTP_RATE_LIMIT_DELAY=0.1  # seconds between requests
 
 print_help() {
   cat <<EOF
@@ -54,6 +57,8 @@ Options:
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
   --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
   --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
+  --url <api_url>                       POST processed data to API URL in batches
+  --header <header>                     Add custom HTTP header (can be used multiple times)
   --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
@@ -62,6 +67,7 @@ Examples:
   $0 data/ -s merged.ndjson
   $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
+  $0 data/ --url https://api.example.com/webhook --header "Authorization: Bearer token" -r 1000
 
 
 EOF
@@ -96,6 +102,10 @@ while [[ $# -gt 0 ]]; do
       S3_KEY_ID="$2"; shift 2 ;;
     --s3-secret) [[ $# -ge 2 ]] || { echo "Error: --s3-secret needs an argument"; exit 1; }
       S3_SECRET="$2"; shift 2 ;;
+    --url) [[ $# -ge 2 ]] || { echo "Error: --url needs an argument"; exit 1; }
+      POST_URL="$2"; shift 2 ;;
+    --header) [[ $# -ge 2 ]] || { echo "Error: --header needs an argument"; exit 1; }
+      HTTP_HEADERS+=("$2"); shift 2 ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -133,6 +143,21 @@ case "$FORMAT" in
   jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
   *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
 esac
+
+# Validation for --url usage
+if [[ -n "$POST_URL" ]]; then
+  # When using --url, we need local output to POST files
+  if [[ -n "$OUTPUT_DIR" && "$OUTPUT_DIR" =~ ^(gs|s3):// ]]; then
+    echo "Error: --url cannot be used with cloud storage output directories (gs:// or s3://)" >&2
+    echo "Use a local output directory with -o flag when using --url" >&2
+    exit 1
+  fi
+  # Default rows per file to 1000 if not specified for batching
+  if [[ $ROWS_PER_FILE -eq 0 && ! $SINGLE_FILE ]]; then
+    ROWS_PER_FILE=1000
+    echo "📦 --url specified: defaulting to --rows 1000 for batching"
+  fi
+fi
 
 if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
@@ -239,6 +264,97 @@ check_output_safety() {
   return 0
 }
 
+post_file_to_url() {
+  local file="$1"
+  local url="$2"
+  local max_retries=3
+  local retry_count=0
+  
+  # Check if curl is available
+  command -v curl >/dev/null 2>&1 || {
+    echo "Error: curl not found. curl is required for --url functionality" >&2
+    return 1
+  }
+  
+  # Build curl command with headers
+  local curl_args=("-X" "POST" "-f" "-s" "-S")
+  
+  # Reconstruct HTTP_HEADERS array from exported variables (for subprocesses)
+  local headers=()
+  if [[ -n "${HTTP_HEADERS_COUNT:-}" ]]; then
+    for (( i=0; i<HTTP_HEADERS_COUNT; i++ )); do
+      local header_var="HTTP_HEADER_$i"
+      headers+=("${!header_var}")
+    done
+  else
+    # Direct access to array (when not in subprocess)
+    headers=("${HTTP_HEADERS[@]}")
+  fi
+  
+  # Add custom headers or default Content-Type
+  local has_content_type=false
+  for header in "${headers[@]}"; do
+    curl_args+=("-H" "$header")
+    if [[ "$header" =~ ^[Cc]ontent-[Tt]ype: ]]; then
+      has_content_type=true
+    fi
+  done
+  
+  # Add default Content-Type if not specified
+  if [[ "$has_content_type" == "false" ]]; then
+    curl_args+=("-H" "Content-Type: application/json")
+  fi
+  
+  # Add the data file
+  curl_args+=("--data-binary" "@$file" "$url")
+  
+  while (( retry_count < max_retries )); do
+    local http_code
+    local response
+    
+    # Run curl and capture both output and HTTP status code
+    if response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null); then
+      http_code="${response: -3}"  # Last 3 characters
+      response="${response%???}"   # Everything except last 3 characters
+      
+      case "$http_code" in
+        2??) 
+          echo "✅ Posted $file to $url (HTTP $http_code)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          return 0
+          ;;
+        429)
+          ((retry_count++))
+          local delay=$((retry_count * 2))  # Exponential backoff
+          echo "⚠️  Rate limited (HTTP 429), retrying in ${delay}s... (attempt $retry_count/$max_retries)"
+          sleep "$delay"
+          ;;
+        *)
+          ((retry_count++))
+          echo "❌ HTTP $http_code error posting $file to $url (attempt $retry_count/$max_retries)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          if (( retry_count < max_retries )); then
+            sleep "$((retry_count * 1))"  # Linear backoff for other errors
+          fi
+          ;;
+      esac
+    else
+      ((retry_count++))
+      echo "❌ Network error posting $file to $url (attempt $retry_count/$max_retries)"
+      if (( retry_count < max_retries )); then
+        sleep "$((retry_count * 1))"
+      fi
+    fi
+  done
+  
+  echo "❌ Failed to post $file to $url after $max_retries attempts" >&2
+  return 1
+}
+
 split_convert_file() {
   local infile="$1"
   local ext="${infile##*.}"
@@ -280,6 +396,13 @@ split_convert_file() {
       ) TO '$out' ($COPY_OPTS);"
     fi
     echo "✅ $out"
+    
+    # POST to URL if specified
+    if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
+      sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+      post_file_to_url "$out" "$POST_URL"
+    fi
+    
     ((i++)); ((offset+=ROWS_PER_FILE))
   done
 }
@@ -315,9 +438,15 @@ convert_file() {
     run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
+  
+  # POST to URL if specified
+  if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
+    sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+    post_file_to_url "$out" "$POST_URL"
+  fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url
 
 load_cloud_creds
 
@@ -380,9 +509,20 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
+    
+    # POST to URL if specified for merged file
+    if [[ -n "$POST_URL" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
+      sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+      post_file_to_url "$OUTPUT_FILENAME" "$POST_URL"
+    fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY
+    # Export HTTP_HEADERS array elements as individual variables for subprocesses
+    for i in "${!HTTP_HEADERS[@]}"; do
+      export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"
+    done
+    export HTTP_HEADERS_COUNT="${#HTTP_HEADERS[@]}"
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi
