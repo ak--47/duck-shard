@@ -320,7 +320,7 @@ post_file_to_url() {
   }
   
   # Build curl command with headers
-  local curl_args=("-X" "POST" "-f" "-s" "-S")
+  local curl_args=("-X" "POST" "-f" "-s" "-S" "--connect-timeout" "10" "--max-time" "30")
   
   # Reconstruct HTTP_HEADERS array from exported variables (for subprocesses)
   local headers=()
@@ -362,8 +362,10 @@ post_file_to_url() {
     local response
     local start_time=$(date +%s)
     
-    # Run curl and capture both output and HTTP status code
-    if response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null); then
+    # Run curl and capture both output and HTTP status code  
+    response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null || echo "000curl_failed")
+    
+    if [[ "$response" != "000curl_failed" && -n "$response" ]]; then
       local end_time=$(date +%s)
       local duration=$((end_time - start_time))
       
@@ -403,6 +405,26 @@ post_file_to_url() {
           echo "⚠️  Rate limited (HTTP 429), retrying in ${delay}s... (attempt $retry_count/$max_retries)"
           sleep "$delay"
           ;;
+        5??)
+          # Server errors - retry
+          ((retry_count++))
+          echo "❌ Server error HTTP $http_code posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          if (( retry_count < max_retries )); then
+            sleep "$((retry_count * 1))"  # Linear backoff for server errors
+          fi
+          ;;
+        4??)
+          # Client errors - don't retry (except 429 handled above)
+          echo "❌ Failed to post $(basename "$file") to $url: HTTP $http_code (client error, not retrying)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          log_http_response "$file" "$url" "$http_code" "$response" "$duration"
+          return 1
+          ;;
         *)
           ((retry_count++))
           echo "❌ HTTP $http_code error posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
@@ -416,7 +438,7 @@ post_file_to_url() {
       esac
     else
       ((retry_count++))
-      echo "❌ Network error posting $file to $url (attempt $retry_count/$max_retries)"
+      echo "❌ Network error posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
       if (( retry_count < max_retries )); then
         sleep "$((retry_count * 1))"
       fi
@@ -472,7 +494,7 @@ split_convert_file() {
     # POST to URL if specified
     if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
-      post_file_to_url "$out" "$POST_URL"
+      post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
     fi
     
     ((i++)); ((offset+=ROWS_PER_FILE))
@@ -514,7 +536,7 @@ convert_file() {
   # POST to URL if specified
   if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
     sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
-    post_file_to_url "$out" "$POST_URL"
+    post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
   fi
 }
 
@@ -585,7 +607,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     # POST to URL if specified for merged file
     if [[ -n "$POST_URL" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
-      post_file_to_url "$OUTPUT_FILENAME" "$POST_URL"
+      post_file_to_url "$OUTPUT_FILENAME" "$POST_URL" || true  # Don't exit on POST failure
     fi
   else
     export -f convert_file

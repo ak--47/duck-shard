@@ -1,29 +1,16 @@
 # 🦆 duck-shard 🚀
 
-## **Spark-like data processing without the infrastructure**
+A DuckDB CLI wrapper offered as swiss army knife which allows you to "batch everything to everything" for your data lake (or local).
 
-**The ultimate "batch everything to everything" CLI for your data lake.**  
-Convert, transform, and stream data to HTTP APIs with zero DevOps overhead.
+convert, transform, and stream data to HTTP APIs with zero DevOps overhead. No cloud. No Python, no JVM, no drama.
 
-Convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**, **CSV**, or **Parquet**.  
-*Stream processed data directly to HTTP endpoints. Deduplicate. Merge. Split into shards. Parallelize across all CPU cores.*
+convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**, **CSV**, or **Parquet**.
+*Stream processed data directly to HTTP endpoints. Deduplicate. Merge. Split into shards. Parallelize across all CPU cores.*  It's great fun!
 
-**Powered by DuckDB. Cross-platform, no Python, no JVM, no drama.**
-
----
-
-## 🎯 **Perfect for:**
-
-* **Real-time data streaming** to APIs and webhooks
-* **Analytics engineering** and ETL pipelines  
-* **Data lake processing** without Spark clusters
-* **Webhook integrations** for event streams
-* **API data ingestion** with automatic batching
-* **Getting data OUT of warehouses FAST**
+**Cross-platform, no Python, no JVM, no drama.**
 
 ---
-
-## ⚡ **What makes duck-shard special**
+## ⚡ Key Features
 
 **🔥 HTTP API Streaming:** POST processed data directly to any HTTP endpoint with automatic batching, rate limiting, retry logic, and throughput monitoring.
 
@@ -46,18 +33,17 @@ curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
 chmod +x duck-shard.sh
 ```
 
-**Basic conversion:**
+**Basic File conversion:**
 ```bash
-./duck-shard.sh ./data/ -f csv -o ./output/
+./duck-shard.sh ./data/ --format csv --output ./output/
 ```
+formats supported: `ndjson`, `csv`, `parquet` ... all interchangeable
 
 **Stream to HTTP API:**
 ```bash
 ./duck-shard.sh ./data/ --url https://api.example.com/events \
-  --header "Authorization: Bearer token123" -r 1000
+  --header "Authorization: Bearer token123" --rows 1000 # Stream 1k rows per batch
 ```
-
----
 
 ## 🌐 **HTTP API Streaming**
 
@@ -93,12 +79,12 @@ Duck-shard can POST processed data directly to HTTP endpoints, making it perfect
 
 *Example transform.sql:*
 ```sql
-SELECT 
+SELECT
   user_id,
   event_name,
   CAST(timestamp AS VARCHAR) as event_time,
   JSON_EXTRACT(properties, '$.revenue') as revenue
-FROM input_data 
+FROM input_data
 WHERE event_name IN ('purchase', 'signup')
   AND timestamp >= '2024-01-01'
 ```
@@ -110,7 +96,7 @@ WHERE event_name IN ('purchase', 'signup')
   --url https://api.example.com/webhook \
   --log \
   -r 1000
-  
+
 # Monitor output:
 # ✅ Posted part-1-1.ndjson (HTTP 200) | 15.2 req/s, 15,200 rec/s
 # ✅ Posted part-1-2.ndjson (HTTP 200) | 16.1 req/s, 16,100 rec/s
@@ -226,7 +212,7 @@ Read from and write to **Google Cloud Storage** and **Amazon S3**:
   --url https://api.example.com/ingest \
   -r 1000
 
-# Local to GCS  
+# Local to GCS
 ./duck-shard.sh ./processed/ \
   --gcs-key YOUR_KEY --gcs-secret YOUR_SECRET \
   -f parquet -o gs://output-bucket/results/
@@ -241,27 +227,27 @@ Apply any SQL transformation using DuckDB's powerful engine:
 **Example: E-commerce event enrichment**
 ```sql
 -- enrich_events.sql
-SELECT 
+SELECT
   event_id,
   user_id,
   event_type,
   CAST(timestamp AS VARCHAR) as event_time,
-  
+
   -- Extract revenue from JSON properties
   CAST(JSON_EXTRACT(properties, '$.revenue') AS DECIMAL(10,2)) as revenue,
   JSON_EXTRACT(properties, '$.product_id') as product_id,
-  
+
   -- Add calculated fields
-  CASE 
+  CASE
     WHEN event_type = 'purchase' AND revenue > 100 THEN 'high_value'
     WHEN event_type = 'purchase' THEN 'standard'
     ELSE 'non_purchase'
   END as customer_segment,
-  
+
   -- Date partitioning
   DATE_TRUNC('day', timestamp) as event_date
-  
-FROM input_data 
+
+FROM input_data
 WHERE timestamp >= CURRENT_DATE - INTERVAL 30 DAY
   AND event_type IN ('page_view', 'purchase', 'signup')
 ORDER BY timestamp;
@@ -280,7 +266,7 @@ ORDER BY timestamp;
 ## 🚀 **Performance & Features**
 
 * **🔥 Parallel Processing:** Utilize all CPU cores automatically
-* **⚡ Streaming:** Real-time HTTP POST with batching and rate limiting  
+* **⚡ Streaming:** Real-time HTTP POST with batching and rate limiting
 * **🛡️ Reliability:** Automatic retries with exponential backoff
 * **📊 Monitoring:** Live throughput stats (requests/sec, records/sec)
 * **📝 Logging:** Complete HTTP response logging to JSON
@@ -336,22 +322,11 @@ Tests cover:
 
 ---
 
-## 🆚 **vs. Alternatives**
-
-| Tool | Setup Time | Memory Usage | HTTP Streaming | SQL Transforms | Cloud Storage |
-|------|------------|--------------|----------------|----------------|---------------|
-| **duck-shard** | 30 seconds | Low | ✅ Built-in | ✅ Full SQL | ✅ Native |
-| Apache Spark | Hours/Days | High | ❌ Complex | ✅ Limited | ✅ Config heavy |
-| Pandas | Minutes | Very High | ❌ Manual | ❌ Limited | ❌ Manual |
-| Plain curl/jq | Minutes | Low | ✅ Manual | ❌ None | ❌ Manual |
-
----
-
 ## 🤷 **Why duck-shard?**
 
 Sometimes you need Spark-level data processing but don't want to:
 - Manage cluster infrastructure
-- Configure resource allocation  
+- Configure resource allocation
 - Debug JVM memory issues
 - Write complex streaming code
 - Set up API integration manually
@@ -368,9 +343,9 @@ Duck-shard gives you the power of distributed data processing with the simplicit
 
 ## 🪧 **License**
 
-MIT — go wild with your data! 
+MIT — go wild with your data!
 
-**PRs, feedback, and wild data dreams welcome.**  
+**PRs, feedback, and wild data dreams welcome.**
 [Raise an issue or open a PR!](https://github.com/ak--47/duck-shard/issues)
 
 ---
