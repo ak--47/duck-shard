@@ -1,271 +1,353 @@
-# 🦆 duck-shard 🗂️
+# 🦆 duck-shard 🚀
 
-## 🤨 wat.
+A DuckDB CLI wrapper offered as swiss army knife which allows you to "batch everything to everything" for your data lake (or local).
 
-**The ultimate "batch everything to everything" CLI for your data lake.**
+convert, transform, and stream data to HTTP APIs with zero DevOps overhead. No cloud. No Python, no JVM, no drama.
 
-Convert folders or files of **Parquet**, **CSV**, or **NDJSON** (even JSONL/JSON) into...
-**NDJSON**, **CSV**, or **Parquet**.
-*Deduplicate. Merge. Split into row-limited shards. Parallelize across all your CPU cores. Output wherever you want.*
-Powered by DuckDB. Cross-platform, no Python, no JVM, no drama.
+convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**, **CSV**, or **Parquet**.
+*Stream processed data directly to HTTP endpoints. Deduplicate. Merge. Split into shards. Parallelize across all CPU cores.*  It's great fun!
 
-**Perfect for:**
+**Cross-platform, no Python, no JVM, no drama.**
 
-* Analytics engineering and data science
-* Batch ETL jobs
-* Getting data OUT of your warehouse or data lake FAST
+---
+## ⚡ Key Features
+
+**🔥 HTTP API Streaming:** POST processed data directly to any HTTP endpoint with automatic batching, rate limiting, retry logic, and throughput monitoring.
+
+**🚀 Spark Performance:** Process massive datasets in parallel across all CPU cores without cluster management.
+
+**🛠️ SQL Transforms:** Apply custom SQL transformations using DuckDB's powerful engine.
+
+**☁️ Cloud Native:** Read from and write to GCS, S3, or local storage seamlessly.
+
+**📦 Zero Dependencies:** Just DuckDB + bash. No Python environments, no JVM heap tuning.
 
 ---
 
-## 👔 tldr;
+## 🚀 **Quick Start**
 
-Convert *any* supported file (or whole directory) to *any* supported format, at speed, with zero dependencies beyond DuckDB.
-
-**Just install [DuckDB](https://duckdb.org/), drop in `duck-shard.sh`, and go.**
-
-Or use homebrew:
-
+**Install:**
 ```bash
-brew tap ak--47/duck-shard  # homebrew-tap
-brew install duckdb
-duck-shard ./myfolder/ -f csv -o ./output/
+brew install duckdb  # or download from duckdb.org
+curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
+chmod +x duck-shard.sh
+```
+
+**Basic File conversion:**
+```bash
+./duck-shard.sh ./data/ --format csv --output ./output/
+```
+formats supported: `ndjson`, `csv`, `parquet` ... all interchangeable
+
+**Stream to HTTP API:**
+```bash
+./duck-shard.sh ./data/ --url https://api.example.com/events \
+  --header "Authorization: Bearer token123" --rows 1000 # Stream 1k rows per batch
+```
+
+## 🌐 **HTTP API Streaming**
+
+Duck-shard can POST processed data directly to HTTP endpoints, making it perfect for real-time data integration:
+
+### **Basic API Streaming**
+```bash
+# Stream CSV data as JSON batches to a webhook
+./duck-shard.sh ./sales_data.csv \
+  --url https://webhook.site/abc123 \
+  -f ndjson -r 1000
+```
+
+### **With Authentication & Headers**
+```bash
+# Post to API with custom headers
+./duck-shard.sh ./events/ \
+  --url https://api.analytics.com/ingest \
+  --header "Authorization: Bearer sk-1234567890" \
+  --header "Content-Type: application/json" \
+  --header "X-Source: data-pipeline" \
+  -r 500
+```
+
+### **SQL Transform + API**
+```bash
+# Transform data with SQL then stream to API
+./duck-shard.sh ./raw_data.parquet \
+  --sql ./transform.sql \
+  --url https://api.example.com/processed \
+  -f ndjson -r 1000
+```
+
+*Example transform.sql:*
+```sql
+SELECT
+  user_id,
+  event_name,
+  CAST(timestamp AS VARCHAR) as event_time,
+  JSON_EXTRACT(properties, '$.revenue') as revenue
+FROM input_data
+WHERE event_name IN ('purchase', 'signup')
+  AND timestamp >= '2024-01-01'
+```
+
+### **Logging & Monitoring**
+```bash
+# Log all HTTP responses and monitor throughput
+./duck-shard.sh ./data/ \
+  --url https://api.example.com/webhook \
+  --log \
+  -r 1000
+
+# Monitor output:
+# ✅ Posted part-1-1.ndjson (HTTP 200) | 15.2 req/s, 15,200 rec/s
+# ✅ Posted part-1-2.ndjson (HTTP 200) | 16.1 req/s, 16,100 rec/s
+
+# Check response logs:
+cat response-logs.json | jq '.[].http_code'
 ```
 
 ---
 
-## 💻 CLI usage
+## 💻 **CLI Reference**
 
 ```bash
 ./duck-shard.sh <input_path> [max_parallel_jobs] [options]
 ```
 
-Where `input_path` is a single file (any supported type), a **directory** containing
-`.parquet`, `.csv`, `.ndjson`, `.jsonl`, or `.json` files, or a **cloud storage path** (see below).
+### **Core Options**
 
----
-
-### 🔧 Options (partial list)
-
-| Option             | Meaning                                            |
+| Option             | Description                                        |
 | ------------------ | -------------------------------------------------- |
-| `-f ndjson`        | Output as NDJSON files (default)                   |
-| `-f csv`           | Output as CSV                                      |
-| `-f parquet`       | Output as Parquet (merge/rewrite)                  |
-| `-c col1,col2`     | Only include certain columns                       |
-| `--dedupe`         | Remove duplicates (across all or chosen columns)   |
-| `-s`               | Merge everything into a single file                |
-| `-s filename`      | ...and specify the name for merged output          |
-| `-o output_dir`    | Directory to place per-file outputs                |
-| `-r N`             | Split outputs with N rows per file                 |
-| `--stringify`      | Coerce all columns to string (useful for CSV/JSON) |
-| `--sql file.sql`   | Use a custom SQL SELECT for output (see below!)    |
-| `--gcs-key KEY`    | Google Cloud Storage HMAC key (see cloud section)  |
-| `--gcs-secret SEC` | Google Cloud Storage HMAC secret                   |
-| `--s3-key KEY`     | AWS S3 access key                                  |
-| `--s3-secret SEC`  | AWS S3 secret key                                  |
-| `-h`               | Print help                                         |
+| `-f ndjson`        | Output format: `ndjson`, `csv`, `parquet`         |
+| `-o output_dir`    | Output directory (local or cloud)                 |
+| `-r N`             | Split into batches of N rows per file             |
+| `-s [filename]`    | Merge everything into single file                 |
+| `-c col1,col2`     | Select only specific columns                       |
+| `--dedupe`         | Remove duplicate rows                              |
+| `--sql file.sql`   | Apply SQL transformation                           |
+
+### **HTTP API Options**
+
+| Option             | Description                                        |
+| ------------------ | -------------------------------------------------- |
+| `--url <api_url>`  | POST processed data to HTTP endpoint               |
+| `--header <header>`| Add custom HTTP header (repeatable)               |
+| `--log`            | Log HTTP responses to `response-logs.json`        |
+
+### **Cloud Storage Options**
+
+| Option             | Description                                        |
+| ------------------ | -------------------------------------------------- |
+| `--gcs-key KEY`    | Google Cloud Storage HMAC key                     |
+| `--gcs-secret SEC` | Google Cloud Storage HMAC secret                  |
+| `--s3-key KEY`     | AWS S3 access key                                 |
+| `--s3-secret SEC`  | AWS S3 secret key                                 |
 
 ---
 
-## 📜 Using the --sql flag
+## 🎯 **Real-World Examples**
 
-Use the `--sql` flag to apply a **custom SQL transformation** to your data **before writing output**.
+### **E-commerce Analytics Pipeline**
+```bash
+# Process daily sales, apply transforms, stream to analytics API
+./duck-shard.sh gs://data-lake/sales/2024-06-11/ \
+  --sql ./sql/clean_sales.sql \
+  --url https://analytics.company.com/api/events \
+  --header "Authorization: Bearer ${API_TOKEN}" \
+  --header "X-Pipeline: daily-sales" \
+  --log \
+  -f ndjson -r 1000
+```
 
-* Your SQL file is evaluated with the source data as a DuckDB view named `input_data`.
-* Use any valid DuckDB `SELECT ... FROM input_data ...` query.
-* Columns and types will match your input file.
+### **Event Stream Processing**
+```bash
+# Convert Parquet event logs to JSON and stream to multiple endpoints
+./duck-shard.sh ./events.parquet \
+  --url https://webhook1.example.com/events \
+  --header "X-Source: event-processor" \
+  -r 500 &
 
-**You can use the flag to:**
+./duck-shard.sh ./events.parquet \
+  --url https://webhook2.example.com/backup \
+  --header "X-Source: event-processor" \
+  -r 500 &
+```
 
-* Select and rename columns
-* Filter rows (e.g. `WHERE`)
-* Transform data (e.g. casting, string ops, math)
-* Aggregate/group (e.g. `GROUP BY`, `COUNT(*)`, etc.)
+### **Data Lake to API Integration**
+```bash
+# Stream processed customer data to CRM API
+./duck-shard.sh s3://company-datalake/customers/ \
+  --sql ./sql/customer_enrichment.sql \
+  --url https://api.crm.com/customers/bulk \
+  --header "Authorization: Bearer ${CRM_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --log \
+  -f ndjson -r 100
+```
 
+### **Local Development & Testing**
+```bash
+# Test API integration with local data
+./duck-shard.sh ./test_data.csv \
+  --url https://httpbin.org/post \
+  --header "X-Test: true" \
+  --log \
+  -f ndjson -r 10 --verbose
+```
 
 ---
 
-### **Example SQL file**
+## 🌩️ **Cloud Storage Support**
 
-Save as `my-query.sql`:
+Read from and write to **Google Cloud Storage** and **Amazon S3**:
 
+```bash
+# GCS to local
+./duck-shard.sh gs://my-bucket/data/ \
+  --gcs-key YOUR_KEY --gcs-secret YOUR_SECRET \
+  -f csv -o ./local_output/
+
+# S3 to API
+./duck-shard.sh s3://data-bucket/events/ \
+  --s3-key AWS_KEY --s3-secret AWS_SECRET \
+  --url https://api.example.com/ingest \
+  -r 1000
+
+# Local to GCS
+./duck-shard.sh ./processed/ \
+  --gcs-key YOUR_KEY --gcs-secret YOUR_SECRET \
+  -f parquet -o gs://output-bucket/results/
+```
+
+---
+
+## 🦆 **SQL Transformations**
+
+Apply any SQL transformation using DuckDB's powerful engine:
+
+**Example: E-commerce event enrichment**
 ```sql
+-- enrich_events.sql
 SELECT
-  event,
+  event_id,
   user_id,
-  CAST(time AS VARCHAR) AS time_str
+  event_type,
+  CAST(timestamp AS VARCHAR) as event_time,
+
+  -- Extract revenue from JSON properties
+  CAST(JSON_EXTRACT(properties, '$.revenue') AS DECIMAL(10,2)) as revenue,
+  JSON_EXTRACT(properties, '$.product_id') as product_id,
+
+  -- Add calculated fields
+  CASE
+    WHEN event_type = 'purchase' AND revenue > 100 THEN 'high_value'
+    WHEN event_type = 'purchase' THEN 'standard'
+    ELSE 'non_purchase'
+  END as customer_segment,
+
+  -- Date partitioning
+  DATE_TRUNC('day', timestamp) as event_date
+
 FROM input_data
-WHERE event IS NOT NULL;
+WHERE timestamp >= CURRENT_DATE - INTERVAL 30 DAY
+  AND event_type IN ('page_view', 'purchase', 'signup')
+ORDER BY timestamp;
+```
+
+```bash
+./duck-shard.sh ./raw_events.parquet \
+  --sql ./enrich_events.sql \
+  --url https://api.analytics.com/events \
+  --header "Authorization: Bearer token" \
+  -r 1000
 ```
 
 ---
 
-### **Example usage**
+## 🚀 **Performance & Features**
 
-```bash
-./duck-shard.sh ./data/part-1.parquet --sql ./my-query.sql -f csv -o ./out/
-```
-
-This writes a CSV with only the columns and rows you want, as defined by your SQL.
-
----
-
-## 🌩️ Cloud Storage Support (GCS & S3)
-
-duck-shard supports reading from and writing to **Google Cloud Storage (`gs://`)** and **Amazon S3 (`s3://`)** buckets, using [DuckDB's httpfs extension](https://duckdb.org/docs/extensions/httpfs.html).
-
-### **Setup**
-
-1. **Enable HMAC authentication for your cloud provider.**
-
-2. Pass your key/secret to duck-shard:
-
-   **Google Cloud Storage:**
-
-   ```
-   ./duck-shard.sh gs://my-bucket/folder/ -f csv --gcs-key <YOUR_KEY_ID> --gcs-secret <YOUR_SECRET>
-   ```
-
-   **Amazon S3:**
-
-   ```
-   ./duck-shard.sh s3://my-bucket/folder/ -f parquet --s3-key <AWS_KEY_ID> --s3-secret <AWS_SECRET>
-   ```
-
-3. Output can be to local disk or (if supported by DuckDB) to a cloud path.
-
-**NOTE:** You need DuckDB v0.9+ with the `httpfs` extension. First time usage may run `INSTALL httpfs` and `LOAD httpfs` automatically.
+* **🔥 Parallel Processing:** Utilize all CPU cores automatically
+* **⚡ Streaming:** Real-time HTTP POST with batching and rate limiting
+* **🛡️ Reliability:** Automatic retries with exponential backoff
+* **📊 Monitoring:** Live throughput stats (requests/sec, records/sec)
+* **📝 Logging:** Complete HTTP response logging to JSON
+* **🌍 Universal:** Works on macOS, Linux, and cloud containers
+* **💾 Memory Efficient:** Stream processing without loading entire datasets
+* **🔄 Format Agnostic:** Parquet ↔ CSV ↔ NDJSON ↔ JSON seamlessly
 
 ---
 
-## 🚀 Examples
+## 📦 **Installation**
 
-**Convert a single Parquet to NDJSON:**
-
+### **Homebrew (macOS/Linux)**
 ```bash
-./duck-shard.sh ./data/part-1.parquet
+brew install duckdb
+brew tap ak--47/duck-shard
+brew install duck-shard
 ```
 
-**Convert a directory of CSV files to NDJSON:**
-
+### **Manual Installation**
 ```bash
-./duck-shard.sh ./testData/csv -f ndjson -o ./out/
+# Install DuckDB
+curl -L https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip -o duckdb.zip
+unzip duckdb.zip && sudo mv duckdb /usr/local/bin/
+
+# Install duck-shard
+curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
+chmod +x duck-shard.sh
 ```
 
-**Convert a folder of NDJSON to a merged Parquet file:**
-
+### **Docker**
 ```bash
-./duck-shard.sh ./testData/ndjson -s all.parquet -f parquet
-```
-
-**Deduplicate on just "event" and "user\_id":**
-
-```bash
-./duck-shard.sh ./testData/parquet -f csv -c event,user_id --dedupe -o ./deduped
-```
-
-**Split a file into shards of 5000 rows:**
-
-```bash
-./duck-shard.sh ./data/part-1.parquet -r 5000 -o ./shards/
-```
-
-**Convert a GCS bucket folder to local CSV files:**
-
-```bash
-./duck-shard.sh gs://my-bucket/data/ -f csv --gcs-key ... --gcs-secret ... -o ./out/
-```
-
-**Merge a folder of Parquet files on S3 into a single NDJSON:**
-
-```bash
-./duck-shard.sh s3://my-bucket/data/ -s all.ndjson -f ndjson --s3-key ... --s3-secret ...
-```
-
-**Coerce all output columns to string (useful for weird CSV/JSON typing issues):**
-
-```bash
-./duck-shard.sh ./testData/parquet -s all.csv -f csv --stringify
-```
-
-**Show help:**
-
-```bash
-./duck-shard.sh -h
+docker run --rm -v $(pwd):/data ak47/duck-shard \
+  /data/input.parquet --url https://api.example.com/webhook -r 1000
 ```
 
 ---
 
-## 🗝 Features
+## 🧪 **Testing**
 
-* 🚀 **Convert Parquet, CSV, NDJSON, JSONL, JSON** — from file, directory, or cloud (GCS/S3)
-* 🔄 **To NDJSON, CSV, or Parquet** — your choice!
-* 🧩 **Merge to single file** (`-s`/`--single-file`) or keep outputs per input
-* 💾 **Custom output directory** with `-o`
-* 🏎 **Parallel processing** (as many jobs as you want)
-* 🦄 **Deduplication** (by all columns, or by a subset)
-* ✂️ **Column selection** with `-c`
-* 🪓 **Split by rows** (e.g. `-r 10000` gives you part-1-1.ndjson, part-1-2.ndjson, ...)
-* 🌩️ **Cloud support** for GCS & S3 (see above)
-* 🪄 **Stringify columns** (`--stringify`) for messy data
-* 🦾 **Works on macOS & Linux** — BSD and GNU tools supported
-* 🦆 **No Python, No Node, No JVM** — just DuckDB and bash
-
----
-
-## 📦 Installation
-
-1. **Install [DuckDB](https://duckdb.org/docs/installation/)** (must be on your `$PATH`).
-2. Download [`duck-shard.sh`](./duck-shard.sh).
-3. Make it executable:
-
-   ```bash
-   chmod +x duck-shard.sh
-   ```
-4. (Optional) Install Bats for testing:
-
-   ```bash
-   make install-deps
-   ```
-
----
-
-## 🏗️ Implementation Notes
-
-* DuckDB's file extension magic means you don't need to specify format — just point to the right files!
-* Supports `.parquet`, `.csv`, `.ndjson`, `.jsonl`, `.json` as input.
-* Output file(s) auto-named to match input unless overridden.
-* Output directory for per-file mode (`-o`), or current dir by default.
-* Single-file mode (`-s`) incompatible with chunking (`-r`).
-* Parallel conversion uses background processes — tested on macOS & Linux.
-* **Cloud support:** httpfs extension loaded automatically for `gs://` and `s3://` URIs.
-* **Stringify mode:** All output columns cast to string (for CSV/NDJSON edge cases).
-
----
-
-## 🤷 why?
-
-Because sometimes you just want to crack open a bucket of files and make them *useful* — without spinning up Spark or wrestling with Pandas. No one-liner should require a 2GB docker image.
-
----
-
-## 🧪 Testing
-
-Run with [`bats`](https://github.com/bats-core/bats-core) and provided sample data:
+Run the comprehensive test suite:
 
 ```bash
 make test
 ```
 
-All file types, modes, and options are tested. See [`tests/test.bats`](./tests/test.bats).
+Tests cover:
+- All format conversions (Parquet ↔ CSV ↔ NDJSON)
+- HTTP API streaming with various configurations
+- Cloud storage integration (GCS, S3)
+- SQL transformations
+- Error handling and edge cases
+- Performance and parallel processing
 
 ---
 
-## 🪧 License
+## 🤷 **Why duck-shard?**
 
-MIT — go wild. PRs, feedback, and wild data dreams welcome.
+Sometimes you need Spark-level data processing but don't want to:
+- Manage cluster infrastructure
+- Configure resource allocation
+- Debug JVM memory issues
+- Write complex streaming code
+- Set up API integration manually
+
+Duck-shard gives you the power of distributed data processing with the simplicity of a single binary. Perfect for:
+
+- **Startups** that need enterprise-grade data processing without the DevOps overhead
+- **Data engineers** who want to prototype pipelines quickly
+- **API integrations** that require reliable data streaming
+- **Cloud migrations** where you need format conversion + API delivery
+- **Local development** where Spark is overkill
+
+---
+
+## 🪧 **License**
+
+MIT — go wild with your data!
+
+**PRs, feedback, and wild data dreams welcome.**
 [Raise an issue or open a PR!](https://github.com/ak--47/duck-shard/issues)
 
 ---
 
-**Happy sharding!** 🦆
+**Happy sharding!** 🦆✨

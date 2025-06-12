@@ -30,9 +30,23 @@ S3_KEY_ID="${S3_KEY_ID:-}"
 S3_SECRET="${S3_SECRET:-}"
 SQL_FILE=""
 VERBOSE=false
+POST_URL=""
+HTTP_HEADERS=()
+HTTP_RATE_LIMIT_DELAY=0.1  # seconds between requests
+LOG_RESPONSES=false
+RESPONSE_LOG_FILE="response-logs.json"
+HTTP_START_TIME=""
 
 print_help() {
   cat <<EOF
+
+     ██████╗ ██╗   ██╗ ██████╗██╗  ██╗      ███████╗██╗  ██╗ █████╗ ██████╗ ██████╗
+     ██╔══██╗██║   ██║██╔════╝██║ ██╔╝      ██╔════╝██║  ██║██╔══██╗██╔══██╗██╔══██╗
+     ██║  ██║██║   ██║██║     █████╔╝ █████╗███████╗███████║███████║██████╔╝██║  ██║
+     ██║  ██║██║   ██║██║     ██╔═██╗ ╚════╝╚════██║██╔══██║██╔══██║██╔══██╗██║  ██║
+     ██████╔╝╚██████╔╝╚██████╗██║  ██╗      ███████║██║  ██║██║  ██║██║  ██║██████╔╝
+     ╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝      ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝
+            by AK
 
 Usage: $0 <input_path> [max_parallel_jobs] [options]
 
@@ -46,6 +60,9 @@ Options:
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
   --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
   --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
+  --url <api_url>                       POST processed data to API URL in batches
+  --header <header>                     Add custom HTTP header (can be used multiple times)
+  --log                                 Log HTTP responses to response-logs.json
   --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
@@ -54,6 +71,9 @@ Examples:
   $0 data/ -s merged.ndjson
   $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
+  $0 data/ --url https://api.example.com/webhook --header "Authorization: Bearer token" -r 1000
+
+
 EOF
 }
 
@@ -86,6 +106,11 @@ while [[ $# -gt 0 ]]; do
       S3_KEY_ID="$2"; shift 2 ;;
     --s3-secret) [[ $# -ge 2 ]] || { echo "Error: --s3-secret needs an argument"; exit 1; }
       S3_SECRET="$2"; shift 2 ;;
+    --url) [[ $# -ge 2 ]] || { echo "Error: --url needs an argument"; exit 1; }
+      POST_URL="$2"; shift 2 ;;
+    --header) [[ $# -ge 2 ]] || { echo "Error: --header needs an argument"; exit 1; }
+      HTTP_HEADERS+=("$2"); shift 2 ;;
+    --log) LOG_RESPONSES=true; shift ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -123,6 +148,21 @@ case "$FORMAT" in
   jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
   *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
 esac
+
+# Validation for --url usage
+if [[ -n "$POST_URL" ]]; then
+  # When using --url, we need local output to POST files
+  if [[ -n "$OUTPUT_DIR" && "$OUTPUT_DIR" =~ ^(gs|s3):// ]]; then
+    echo "Error: --url cannot be used with cloud storage output directories (gs:// or s3://)" >&2
+    echo "Use a local output directory with -o flag when using --url" >&2
+    exit 1
+  fi
+  # Default rows per file to 1000 if not specified for batching
+  if [[ $ROWS_PER_FILE -eq 0 && ! $SINGLE_FILE ]]; then
+    ROWS_PER_FILE=1000
+    echo "📦 --url specified: defaulting to --rows 1000 for batching"
+  fi
+fi
 
 if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
@@ -168,8 +208,11 @@ find_input_files() {
     if [[ "$path" =~ \.(parquet|csv|ndjson|jsonl|json)$ ]]; then
       echo "$path"
     else
-      run_duckdb "SELECT filename FROM list_files('$path', recursive=true);" | \
-        awk '/^gs:\/\// || /^s3:\/\// {if (match($0, /\.(parquet|csv|ndjson|jsonl|json)$/)) print $0}' | sort
+      # Use glob to find files in cloud storage
+      for ext in parquet csv ndjson jsonl json; do
+        run_duckdb "COPY (SELECT file FROM glob('${path%/}/*.$ext')) TO '/dev/stdout' (FORMAT CSV, HEADER false);" | \
+          grep -E "^(gs|s3)://"
+      done | sort
     fi
   else
     find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' \) | sort
@@ -195,11 +238,6 @@ dedupe_select_clause() {
 
 output_base_name() {
   local file="$1"
-  # If input ends with * (glob), make output name "merged"
-  if [[ "$file" == *'*'* ]]; then
-    echo "merged"
-    return
-  fi
   local base="$(basename "$file")"
   local outbase="${base%.*}"
   echo "$outbase"
@@ -207,6 +245,208 @@ output_base_name() {
 
 get_sql_stmt() {
   cat "$1" | sed -e 's/[[:space:]]*$//' -e ':a' -e 's/;$//;ta' -e 's/[[:space:]]*$//'
+}
+
+check_output_safety() {
+  local infile="$1"
+  local outfile="$2"
+
+  # Skip check for cloud storage paths
+  if [[ "$infile" =~ ^(gs|s3):// || "$outfile" =~ ^(gs|s3):// ]]; then
+    return 0
+  fi
+
+  # Convert to absolute paths for comparison
+  local abs_infile abs_outfile
+  abs_infile=$(to_abs "$infile")
+  abs_outfile=$(to_abs "$outfile")
+
+  if [[ "$abs_infile" == "$abs_outfile" ]]; then
+    echo "Error: Output file '$outfile' would overwrite input file '$infile'" >&2
+    echo "Use -o flag to specify a different output directory" >&2
+    return 1
+  fi
+  return 0
+}
+
+log_http_response() {
+  local file="$1"
+  local url="$2"
+  local http_code="$3"
+  local response="$4"
+  local duration="$5"
+  
+  if [[ "$LOG_RESPONSES" == "true" ]]; then
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local log_entry=$(cat <<EOF
+{
+  "timestamp": "$timestamp",
+  "file": "$file",
+  "url": "$url",
+  "http_code": $http_code,
+  "response": $(echo "$response" | jq -R . 2>/dev/null || echo "\"$response\""),
+  "duration_ms": $duration
+}
+EOF
+)
+    # Append to log file with proper JSON array formatting
+    if [[ ! -f "$RESPONSE_LOG_FILE" ]]; then
+      echo "[$log_entry]" > "$RESPONSE_LOG_FILE"
+    else
+      # Remove last ] and add new entry
+      sed -i '$ s/]$//' "$RESPONSE_LOG_FILE" 2>/dev/null || sed -i '' '$ s/]$//' "$RESPONSE_LOG_FILE" 2>/dev/null
+      echo ",$log_entry]" >> "$RESPONSE_LOG_FILE"
+    fi
+  fi
+}
+
+post_file_to_url() {
+  local file="$1"
+  local url="$2"
+  local max_retries=3
+  local retry_count=0
+  
+  # Initialize HTTP tracking on first call
+  if [[ -z "$HTTP_START_TIME" ]]; then
+    HTTP_START_TIME=$(date +%s)
+    HTTP_REQUEST_COUNT=0
+    HTTP_RECORD_COUNT=0
+  fi
+  
+  # Check if curl is available
+  command -v curl >/dev/null 2>&1 || {
+    echo "Error: curl not found. curl is required for --url functionality" >&2
+    return 1
+  }
+  
+  # Build curl command with headers
+  local curl_args=("-X" "POST" "-f" "-s" "-S" "--connect-timeout" "10" "--max-time" "30")
+  
+  # Reconstruct HTTP_HEADERS array from exported variables (for subprocesses)
+  local headers=()
+  if [[ -n "${HTTP_HEADERS_COUNT:-}" ]]; then
+    for (( i=0; i<HTTP_HEADERS_COUNT; i++ )); do
+      local header_var="HTTP_HEADER_$i"
+      headers+=("${!header_var}")
+    done
+  else
+    # Direct access to array (when not in subprocess)
+    headers=("${HTTP_HEADERS[@]}")
+  fi
+  
+  # Add custom headers or default Content-Type
+  local has_content_type=false
+  for header in "${headers[@]}"; do
+    curl_args+=("-H" "$header")
+    if [[ "$header" =~ ^[Cc]ontent-[Tt]ype: ]]; then
+      has_content_type=true
+    fi
+  done
+  
+  # Add default Content-Type if not specified
+  if [[ "$has_content_type" == "false" ]]; then
+    curl_args+=("-H" "Content-Type: application/json")
+  fi
+  
+  # Add the data file
+  curl_args+=("--data-binary" "@$file" "$url")
+  
+  # Count records in file for throughput calculation
+  local record_count=0
+  if [[ -f "$file" ]]; then
+    record_count=$(wc -l < "$file" 2>/dev/null || echo 0)
+  fi
+  
+  while (( retry_count < max_retries )); do
+    local http_code
+    local response
+    local start_time=$(date +%s)
+    
+    # Run curl and capture both output and HTTP status code  
+    response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null || echo "000curl_failed")
+    
+    if [[ "$response" != "000curl_failed" && -n "$response" ]]; then
+      local end_time=$(date +%s)
+      local duration=$((end_time - start_time))
+      
+      http_code="${response: -3}"  # Last 3 characters
+      response="${response%???}"   # Everything except last 3 characters
+      
+      # Log response if requested
+      log_http_response "$file" "$url" "$http_code" "$response" "$duration"
+      
+      case "$http_code" in
+        2??) 
+          # Update counters for throughput
+          ((HTTP_REQUEST_COUNT++))
+          HTTP_RECORD_COUNT=$((HTTP_RECORD_COUNT + record_count))
+          
+          # Calculate and display throughput
+          local elapsed=$(($(date +%s) - HTTP_START_TIME))
+          if (( elapsed > 0 )); then
+            local req_per_sec=$(( HTTP_REQUEST_COUNT * 100 / elapsed ))  # *100 for 2 decimal precision
+            local rec_per_sec=$(( HTTP_RECORD_COUNT * 100 / elapsed ))
+            printf "✅ Posted %s to %s (HTTP %s) | %d.%02d req/s, %d.%02d rec/s\n" \
+              "$(basename "$file")" "$url" "$http_code" \
+              $((req_per_sec / 100)) $((req_per_sec % 100)) \
+              $((rec_per_sec / 100)) $((rec_per_sec % 100))
+          else
+            echo "✅ Posted $(basename "$file") to $url (HTTP $http_code)"
+          fi
+          
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          return 0
+          ;;
+        429)
+          ((retry_count++))
+          local delay=$((retry_count * 2))  # Exponential backoff
+          echo "⚠️  Rate limited (HTTP 429), retrying in ${delay}s... (attempt $retry_count/$max_retries)"
+          sleep "$delay"
+          ;;
+        5??)
+          # Server errors - retry
+          ((retry_count++))
+          echo "❌ Server error HTTP $http_code posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          if (( retry_count < max_retries )); then
+            sleep "$((retry_count * 1))"  # Linear backoff for server errors
+          fi
+          ;;
+        4??)
+          # Client errors - don't retry (except 429 handled above)
+          echo "❌ Failed to post $(basename "$file") to $url: HTTP $http_code (client error, not retrying)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          log_http_response "$file" "$url" "$http_code" "$response" "$duration"
+          return 1
+          ;;
+        *)
+          ((retry_count++))
+          echo "❌ HTTP $http_code error posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
+          if $VERBOSE && [[ -n "$response" ]]; then
+            echo "Response: $response"
+          fi
+          if (( retry_count < max_retries )); then
+            sleep "$((retry_count * 1))"  # Linear backoff for other errors
+          fi
+          ;;
+      esac
+    else
+      ((retry_count++))
+      echo "❌ Network error posting $(basename "$file") to $url (attempt $retry_count/$max_retries)"
+      if (( retry_count < max_retries )); then
+        sleep "$((retry_count * 1))"
+      fi
+    fi
+  done
+  
+  echo "❌ Failed to post $file to $url after $max_retries attempts" >&2
+  return 1
 }
 
 split_convert_file() {
@@ -231,6 +471,12 @@ split_convert_file() {
     else
       out="$(dirname "$infile")/$outbase-$i.$EXT"
     fi
+
+    # Safety check to prevent overwriting source file
+    if ! check_output_safety "$infile" "$out"; then
+      return 1
+    fi
+
     [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
@@ -244,6 +490,13 @@ split_convert_file() {
       ) TO '$out' ($COPY_OPTS);"
     fi
     echo "✅ $out"
+    
+    # POST to URL if specified
+    if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
+      sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+      post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
+    fi
+    
     ((i++)); ((offset+=ROWS_PER_FILE))
   done
 }
@@ -263,6 +516,12 @@ convert_file() {
   else
     out="$(dirname "$infile")/$outbase.$EXT"
   fi
+
+  # Safety check to prevent overwriting source file
+  if ! check_output_safety "$infile" "$out"; then
+    return 1
+  fi
+
   [[ ! "$out" =~ ^(gs|s3):// ]] && [[ -f "$out" ]] && rm -f "$out"
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
@@ -273,9 +532,15 @@ convert_file() {
     run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
+  
+  # POST to URL if specified
+  if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
+    sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+    post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
+  fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response
 
 load_cloud_creds
 
@@ -294,14 +559,34 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   duckdb_func=$(get_duckdb_func "$first_ext")
 
   if $SINGLE_FILE; then
+    # Determine default output directory - use source directory when OUTPUT_DIR not specified
+    default_output_dir=""
+    if [[ -n "${OUTPUT_DIR:-}" ]]; then
+      default_output_dir="${OUTPUT_DIR}"
+    elif [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+      if [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+        default_output_dir="$(dirname "$INPUT_PATH")"
+      else
+        default_output_dir="$INPUT_PATH"
+      fi
+    else
+      default_output_dir="$(dirname "$INPUT_PATH")"
+    fi
+
     if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
       if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
-        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
+        OUTPUT_FILENAME="${default_output_dir%/}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
       else
-        OUTPUT_FILENAME="${OUTPUT_DIR:-.}/$(basename "${INPUT_PATH%.*}")_merged.$EXT"
+        base_name="$(basename "$INPUT_PATH")"
+        # Handle files without extensions or with multiple dots properly
+        if [[ "$base_name" == *.* ]]; then
+          base_name="${base_name%.*}"
+        fi
+        OUTPUT_FILENAME="${default_output_dir%/}/${base_name}_merged.$EXT"
       fi
-    elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
-      OUTPUT_FILENAME="${OUTPUT_DIR%/}/${OUTPUT_FILENAME}"
+    elif [[ "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
+      # Apply the default output directory when filename is relative
+      OUTPUT_FILENAME="${default_output_dir%/}/${OUTPUT_FILENAME}"
     fi
     [[ ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]] && [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then
@@ -318,9 +603,20 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
+    
+    # POST to URL if specified for merged file
+    if [[ -n "$POST_URL" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
+      sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
+      post_file_to_url "$OUTPUT_FILENAME" "$POST_URL" || true  # Don't exit on POST failure
+    fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT
+    # Export HTTP_HEADERS array elements as individual variables for subprocesses
+    for i in "${!HTTP_HEADERS[@]}"; do
+      export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"
+    done
+    export HTTP_HEADERS_COUNT="${#HTTP_HEADERS[@]}"
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
     echo "🎉 All individual conversions complete."
   fi

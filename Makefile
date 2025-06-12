@@ -71,6 +71,7 @@ clean:
 	@find . -name "*.tmp" -delete 2>/dev/null || true
 	@find . -name "test_temp_*" -type d -exec rm -rf {} + 2>/dev/null || true
 	@find ./tmp -type f ! -name '.gitkeep' -exec rm -f {} + 2>/dev/null || true
+	@rm -f ./tests/response-logs.json 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
 # Quick test for CI/CD
