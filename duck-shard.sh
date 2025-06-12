@@ -326,21 +326,21 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   duckdb_func=$(get_duckdb_func "$first_ext")
 
   if $SINGLE_FILE; then
-    if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
-      # Determine default output directory - use source directory when OUTPUT_DIR not specified
-      default_output_dir=""
-      if [[ -n "${OUTPUT_DIR:-}" ]]; then
-        default_output_dir="${OUTPUT_DIR}"
-      elif [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
-        if [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
-          default_output_dir="$(dirname "$INPUT_PATH")"
-        else
-          default_output_dir="$INPUT_PATH"
-        fi
-      else
+    # Determine default output directory - use source directory when OUTPUT_DIR not specified
+    default_output_dir=""
+    if [[ -n "${OUTPUT_DIR:-}" ]]; then
+      default_output_dir="${OUTPUT_DIR}"
+    elif [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+      if [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         default_output_dir="$(dirname "$INPUT_PATH")"
+      else
+        default_output_dir="$INPUT_PATH"
       fi
-      
+    else
+      default_output_dir="$(dirname "$INPUT_PATH")"
+    fi
+    
+    if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
       if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         OUTPUT_FILENAME="${default_output_dir%/}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
       else
@@ -351,8 +351,9 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         fi
         OUTPUT_FILENAME="${default_output_dir%/}/${base_name}_merged.$EXT"
       fi
-    elif [[ -n "${OUTPUT_DIR:-}" && "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
-      OUTPUT_FILENAME="${OUTPUT_DIR%/}/${OUTPUT_FILENAME}"
+    elif [[ "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
+      # Apply the default output directory when filename is relative
+      OUTPUT_FILENAME="${default_output_dir%/}/${OUTPUT_FILENAME}"
     fi
     [[ ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]] && [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then

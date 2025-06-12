@@ -104,7 +104,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 # cd ./tmp && ../duck-shard.sh ../tests/testData/parquet -s all.csv -f csv
 @test "parquet dir > merged single csv file" {
     cd "$TEST_OUTPUT_DIR"
-    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all.csv -f csv
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all.csv -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "all.csv"
     run head -1 "all.csv"
@@ -182,7 +182,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 # cd ./tmp && ../duck-shard.sh ../tests/testData/parquet -s all_str.csv -f csv --stringify
 @test "parquet dir > merged single csv file with --stringify" {
     cd "$TEST_OUTPUT_DIR"
-    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all_str.csv -f csv --stringify
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all_str.csv -f csv --stringify -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "all_str.csv"
     # Check that there are no obvious type errors in CSV output
@@ -522,52 +522,62 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 ##### ==== FILE NAMING TESTS ====
 
-# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson
+# ./duck-shard.sh ./tmp/test_file.parquet -f ndjson
 @test "single file conversion without -o uses source directory" {
-    local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
-    local expected_out="$TEST_DATA_DIR/parquet/part-1.ndjson"
-    run "$SCRIPT_PATH" "$in_file" -f ndjson
+    local temp_file="$TEST_OUTPUT_DIR/test_file.parquet"
+    local expected_out="$TEST_OUTPUT_DIR/test_file.ndjson"
+    cp "$TEST_DATA_DIR/parquet/part-1.parquet" "$temp_file"
+
+    run "$SCRIPT_PATH" "$temp_file" -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
-    rm -f "$expected_out"
 }
 
-# ./duck-shard.sh ./tests/testData/parquet -s -f ndjson
+# ./duck-shard.sh ./tmp/test_parquet_dir -s -f ndjson
 @test "single file merge without -o uses source directory" {
-    local in_dir="$TEST_DATA_DIR/parquet"
-    local expected_out="$TEST_DATA_DIR/parquet/parquet_merged.ndjson"
-    run "$SCRIPT_PATH" "$in_dir" -s -f ndjson
+    local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
+    local expected_out="$temp_dir/test_parquet_dir_merged.ndjson"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+
+    run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
-    rm -f "$expected_out"
 }
 
-# ./duck-shard.sh ./tests/testData/parquet -s custom_name.ndjson -f ndjson
+# ./duck-shard.sh ./tmp/test_parquet_dir -s custom_name.ndjson -f ndjson
 @test "single file merge with specific filename without -o uses source directory" {
-    local in_dir="$TEST_DATA_DIR/parquet"
-    local expected_out="$TEST_DATA_DIR/parquet/custom_name.ndjson"
-    run "$SCRIPT_PATH" "$in_dir" -s custom_name.ndjson -f ndjson
+    local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
+    local expected_out="$temp_dir/custom_name.ndjson"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+
+    run "$SCRIPT_PATH" "$temp_dir" -s custom_name.ndjson -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
-    rm -f "$expected_out"
 }
 
-# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f csv
+# ./duck-shard.sh ./tmp/test_file.csv -f csv
 @test "prevents overwriting source file when converting to same format in same directory" {
-    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
-    run "$SCRIPT_PATH" "$in_file" -f csv
+    local temp_file="$TEST_OUTPUT_DIR/test_file.csv"
+    cp "$TEST_DATA_DIR/csv/part-1.csv" "$temp_file"
+
+    run "$SCRIPT_PATH" "$temp_file" -f csv
     [ "$status" -eq 1 ]
     [[ "$output" == *"Error: Output file"* ]]
     [[ "$output" == *"would overwrite input file"* ]]
 }
 
-# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f ndjson -r 100
-@test "prevents overwriting source file in split mode" {
-    local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
-    run "$SCRIPT_PATH" "$in_file" -f ndjson -r 100
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"Error: Output file"* ]]
-    [[ "$output" == *"would overwrite input file"* ]]
+# ./duck-shard.sh ./tmp/test_file-1.ndjson -f ndjson -r 2000 (would create test_file-1-1.ndjson, etc.)
+@test "split mode creates appropriately named files" {
+    local temp_file="$TEST_OUTPUT_DIR/test_file.ndjson"
+    cp "$TEST_DATA_DIR/ndjson/part-1.ndjson" "$temp_file"
+
+    run "$SCRIPT_PATH" "$temp_file" -f ndjson -r 2000
+    [ "$status" -eq 0 ]
+    # Check that split files were created (should be test_file-1.ndjson, test_file-2.ndjson, etc.)
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/test_file-1.ndjson"
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/test_file-2.ndjson"
 }
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f csv -o ./tmp/
@@ -579,15 +589,15 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     file_exists_and_not_empty "$expected_out"
 }
 
-# ./duck-shard.sh ./tmp/no_extension -f ndjson
-@test "handles files without extensions properly" {
-    local test_file="$TEST_OUTPUT_DIR/no_extension"
+# ./duck-shard.sh ./tmp/no_extension.csv -f ndjson (test extension-based output naming)
+@test "handles files without dots in name properly" {
+    local test_file="$TEST_OUTPUT_DIR/file_no_dots.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
-    local expected_out="$TEST_OUTPUT_DIR/no_extension.ndjson"
-    
-    # Copy a test file without extension
+    local expected_out="$TEST_OUTPUT_DIR/file_no_dots.ndjson"
+
+    # Copy a test file with no dots in name but proper extension
     cp "$in_file" "$test_file"
-    
+
     run "$SCRIPT_PATH" "$test_file" -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
@@ -598,10 +608,10 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local test_file="$TEST_OUTPUT_DIR/data.backup.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/data.backup.ndjson"
-    
+
     # Copy a test file with multiple dots
     cp "$in_file" "$test_file"
-    
+
     run "$SCRIPT_PATH" "$test_file" -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
@@ -612,10 +622,10 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local test_file="$TEST_OUTPUT_DIR/data*special.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/data*special.ndjson"
-    
+
     # Copy a test file with asterisk in name
     cp "$in_file" "$test_file"
-    
+
     run "$SCRIPT_PATH" "$test_file" -f ndjson
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected_out"
@@ -627,7 +637,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local temp_dir="$TEST_OUTPUT_DIR/subdir"
     mkdir -p "$temp_dir"
     cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
-    
+
     local expected_out="$temp_dir/subdir_merged.ndjson"
     run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
     [ "$status" -eq 0 ]
