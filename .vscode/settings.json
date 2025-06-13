@@ -21,6 +21,7 @@
     },
 	"terminal.integrated.defaultProfile.osx": "bash",
 	"cSpell.words": [
+		"gsub",
 		"HMAC",
 		"httpfs",
 		"infile",
