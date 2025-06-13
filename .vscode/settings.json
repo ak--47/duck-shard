@@ -19,5 +19,10 @@
             "args": ["-l"]
         }
     },
-    "terminal.integrated.defaultProfile.osx": "bash"
+	"terminal.integrated.defaultProfile.osx": "bash",
+	"cSpell.words": [
+		"HMAC",
+		"randomdata",
+		"unwritable"
+	]
 }
