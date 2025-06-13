@@ -36,6 +36,8 @@ HTTP_RATE_LIMIT_DELAY=0.1  # seconds between requests
 LOG_RESPONSES=false
 RESPONSE_LOG_FILE="response-logs.json"
 HTTP_START_TIME=""
+JQ_EXPRESSION=""
+PREVIEW_ROWS=0
 
 print_help() {
   cat <<EOF
@@ -63,6 +65,8 @@ Options:
   --url <api_url>                       POST processed data to API URL in batches
   --header <header>                     Add custom HTTP header (can be used multiple times)
   --log                                 Log HTTP responses to response-logs.json
+  --jq <expression>                     Apply jq transformation to JSON output (requires json/ndjson/jsonl format)
+  --preview <N>                         Preview mode: process only first N rows (default 10), don't write files
   --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
@@ -72,6 +76,9 @@ Examples:
   $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
   $0 data/ --url https://api.example.com/webhook --header "Authorization: Bearer token" -r 1000
+  $0 data/ -f ndjson --jq '.user_id = (.user_id | tonumber)' -o ./out/
+  $0 data/ --preview 5 -f csv
+  $0 data/ -f ndjson --jq 'select(.event == "click")' --url https://api.example.com/data
 
 
 EOF
@@ -111,6 +118,10 @@ while [[ $# -gt 0 ]]; do
     --header) [[ $# -ge 2 ]] || { echo "Error: --header needs an argument"; exit 1; }
       HTTP_HEADERS+=("$2"); shift 2 ;;
     --log) LOG_RESPONSES=true; shift ;;
+    --jq) [[ $# -ge 2 ]] || { echo "Error: --jq needs an argument"; exit 1; }
+      JQ_EXPRESSION="$2"; shift 2 ;;
+    --preview) PREVIEW_ROWS=10; shift
+      if [[ $# -gt 0 && $1 =~ ^[0-9]+$ ]]; then PREVIEW_ROWS="$1"; shift; fi ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -119,6 +130,14 @@ done
 set -- "${POSITIONAL[@]}"
 
 export GCS_KEY_ID GCS_SECRET S3_KEY_ID S3_SECRET
+
+# Check for jq if JQ_EXPRESSION is provided
+if [[ -n "$JQ_EXPRESSION" ]]; then
+  command -v jq >/dev/null 2>&1 || {
+    echo "Error: jq not installed. jq is required for --jq functionality. See https://jqlang.org/" >&2
+    exit 1
+  }
+fi
 
 if [[ $# -eq 0 ]]; then print_help; exit 0; fi
 
@@ -149,6 +168,14 @@ case "$FORMAT" in
   *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
 esac
 
+# Validation for --jq usage
+if [[ -n "$JQ_EXPRESSION" ]]; then
+  case "$FORMAT" in
+    ndjson|jsonl|json) ;;
+    *) echo "Error: --jq can only be used with JSON output formats (ndjson, json, jsonl)" >&2; exit 1 ;;
+  esac
+fi
+
 # Validation for --url usage
 if [[ -n "$POST_URL" ]]; then
   # When using --url, we need local output to POST files
@@ -166,6 +193,16 @@ fi
 
 if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
+fi
+
+# Validation for --preview usage
+if (( PREVIEW_ROWS > 0 )); then
+  if [[ -n "$POST_URL" ]]; then
+    echo "Error: --preview cannot be used with --url (preview mode doesn't POST data)" >&2; exit 1
+  fi
+  if [[ -n "${OUTPUT_DIR:-}" || -n "${OUTPUT_FILENAME:-}" ]]; then
+    echo "Warning: --preview mode specified - no files will be written to disk" >&2
+  fi
 fi
 
 get_duckdb_func() {
@@ -275,7 +312,7 @@ log_http_response() {
   local http_code="$3"
   local response="$4"
   local duration="$5"
-  
+
   if [[ "$LOG_RESPONSES" == "true" ]]; then
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local log_entry=$(cat <<EOF
@@ -300,28 +337,90 @@ EOF
   fi
 }
 
+apply_jq_transform() {
+  local file="$1"
+  local jq_expr="$2"
+
+  if [[ -z "$jq_expr" ]]; then
+    return 0
+  fi
+
+  # Check if file exists and is readable
+  if [[ ! -f "$file" || ! -r "$file" ]]; then
+    echo "Error: Cannot read file $file for jq transformation" >&2
+    return 1
+  fi
+
+  local temp_file="${file}.jq.tmp"
+  local line_count=$(wc -l < "$file" 2>/dev/null || echo 0)
+
+  echo "🔄 Applying jq transformation to $file ($line_count lines)..."
+
+  # Apply jq transformation
+  if jq -c "$jq_expr" "$file" > "$temp_file" 2>/dev/null; then
+    local new_line_count=$(wc -l < "$temp_file" 2>/dev/null || echo 0)
+    echo "✅ jq transformation complete: $line_count → $new_line_count lines"
+    mv "$temp_file" "$file"
+    return 0
+  else
+    echo "❌ jq transformation failed for $file" >&2
+    rm -f "$temp_file"
+    return 1
+  fi
+}
+
+preview_file() {
+  local infile="$1"
+  local preview_rows="$2"
+  local ext="${infile##*.}"
+  local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+
+  echo "🔍 Preview mode: showing first $preview_rows rows from $infile"
+
+  if [[ -n "$SQL_FILE" ]]; then
+    sql_stmt=$(get_sql_stmt "$SQL_FILE")
+    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt LIMIT $preview_rows ) TO '/dev/stdout' ($COPY_OPTS);"
+  else
+    local sel; sel=$(dedupe_select_clause)
+    run_duckdb "COPY ($sel FROM $duckdb_func('$infile') LIMIT $preview_rows) TO '/dev/stdout' ($COPY_OPTS);"
+  fi | {
+    if [[ -n "$JQ_EXPRESSION" && "$FORMAT" =~ ^(ndjson|json|jsonl)$ ]]; then
+      echo "🔄 Applying jq transformation: $JQ_EXPRESSION"
+      jq -c "$JQ_EXPRESSION" 2>/dev/null || {
+        echo "❌ jq transformation failed in preview mode" >&2
+        cat  # fallback to showing untransformed data
+      }
+    else
+      cat
+    fi
+  }
+
+  echo -e "\n✅ Preview complete (first $preview_rows rows shown)"
+}
+
 post_file_to_url() {
   local file="$1"
   local url="$2"
   local max_retries=3
   local retry_count=0
-  
+  local last_http_code=""
+
   # Initialize HTTP tracking on first call
   if [[ -z "$HTTP_START_TIME" ]]; then
     HTTP_START_TIME=$(date +%s)
     HTTP_REQUEST_COUNT=0
     HTTP_RECORD_COUNT=0
   fi
-  
+
   # Check if curl is available
   command -v curl >/dev/null 2>&1 || {
     echo "Error: curl not found. curl is required for --url functionality" >&2
     return 1
   }
-  
+
   # Build curl command with headers
   local curl_args=("-X" "POST" "-f" "-s" "-S" "--connect-timeout" "10" "--max-time" "30")
-  
+
   # Reconstruct HTTP_HEADERS array from exported variables (for subprocesses)
   local headers=()
   if [[ -n "${HTTP_HEADERS_COUNT:-}" ]]; then
@@ -333,7 +432,7 @@ post_file_to_url() {
     # Direct access to array (when not in subprocess)
     headers=("${HTTP_HEADERS[@]}")
   fi
-  
+
   # Add custom headers or default Content-Type
   local has_content_type=false
   for header in "${headers[@]}"; do
@@ -342,45 +441,46 @@ post_file_to_url() {
       has_content_type=true
     fi
   done
-  
+
   # Add default Content-Type if not specified
   if [[ "$has_content_type" == "false" ]]; then
     curl_args+=("-H" "Content-Type: application/json")
   fi
-  
+
   # Add the data file
   curl_args+=("--data-binary" "@$file" "$url")
-  
+
   # Count records in file for throughput calculation
   local record_count=0
   if [[ -f "$file" ]]; then
     record_count=$(wc -l < "$file" 2>/dev/null || echo 0)
   fi
-  
+
   while (( retry_count < max_retries )); do
     local http_code
     local response
     local start_time=$(date +%s)
-    
-    # Run curl and capture both output and HTTP status code  
+
+    # Run curl and capture both output and HTTP status code
     response=$(curl "${curl_args[@]}" -w "%{http_code}" 2>/dev/null || echo "000curl_failed")
-    
+
     if [[ "$response" != "000curl_failed" && -n "$response" ]]; then
       local end_time=$(date +%s)
       local duration=$((end_time - start_time))
-      
+
       http_code="${response: -3}"  # Last 3 characters
+      last_http_code="$http_code"  # Track for final error message
       response="${response%???}"   # Everything except last 3 characters
-      
+
       # Log response if requested
       log_http_response "$file" "$url" "$http_code" "$response" "$duration"
-      
+
       case "$http_code" in
-        2??) 
+        2??)
           # Update counters for throughput
           ((HTTP_REQUEST_COUNT++))
           HTTP_RECORD_COUNT=$((HTTP_RECORD_COUNT + record_count))
-          
+
           # Calculate and display throughput
           local elapsed=$(($(date +%s) - HTTP_START_TIME))
           if (( elapsed > 0 )); then
@@ -393,7 +493,7 @@ post_file_to_url() {
           else
             echo "✅ Posted $(basename "$file") to $url (HTTP $http_code)"
           fi
-          
+
           if $VERBOSE && [[ -n "$response" ]]; then
             echo "Response: $response"
           fi
@@ -444,8 +544,12 @@ post_file_to_url() {
       fi
     fi
   done
-  
-  echo "❌ Failed to post $file to $url after $max_retries attempts" >&2
+
+  if [[ -n "$last_http_code" ]]; then
+    echo "❌ Failed to post $file to $url after $max_retries attempts (last HTTP status: $last_http_code)" >&2
+  else
+    echo "❌ Failed to post $file to $url after $max_retries attempts (network error)" >&2
+  fi
   return 1
 }
 
@@ -489,14 +593,21 @@ split_convert_file() {
         LIMIT $ROWS_PER_FILE OFFSET $offset
       ) TO '$out' ($COPY_OPTS);"
     fi
-    echo "✅ $out"
-    
+    echo -e "\n✅ $out\n"
+
+    # Apply jq transformation if specified
+    if [[ -n "$JQ_EXPRESSION" && ! "$out" =~ ^(gs|s3):// ]]; then
+      apply_jq_transform "$out" "$JQ_EXPRESSION" || {
+        echo "Warning: jq transformation failed for $out, continuing..." >&2
+      }
+    fi
+
     # POST to URL if specified
     if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
       post_file_to_url "$out" "$POST_URL" || true  # Don't exit on POST failure
     fi
-    
+
     ((i++)); ((offset+=ROWS_PER_FILE))
   done
 }
@@ -532,7 +643,14 @@ convert_file() {
     run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
-  
+
+  # Apply jq transformation if specified
+  if [[ -n "$JQ_EXPRESSION" && ! "$out" =~ ^(gs|s3):// ]]; then
+    apply_jq_transform "$out" "$JQ_EXPRESSION" || {
+      echo "Warning: jq transformation failed for $out, continuing..." >&2
+    }
+  fi
+
   # POST to URL if specified
   if [[ -n "$POST_URL" && ! "$out" =~ ^(gs|s3):// ]]; then
     sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
@@ -540,11 +658,11 @@ convert_file() {
   fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file
 
 load_cloud_creds
 
-echo "🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}"
+echo -e "\n🦆  DUCK SHARD JOB START\n\n🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}  jq=${JQ_EXPRESSION:-}  preview=${PREVIEW_ROWS:-0}\n"
 
 if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   FILES=()
@@ -557,6 +675,14 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
   done
   duckdb_func=$(get_duckdb_func "$first_ext")
+
+  # Handle preview mode for directories
+  if (( PREVIEW_ROWS > 0 )); then
+    echo "🔍 Preview mode: processing first file only"
+    preview_file "${FILES[0]}" "$PREVIEW_ROWS"
+    echo -e "🦆  DUCK SHARD PREVIEW 💯 DONE\n"
+    exit 0
+  fi
 
   if $SINGLE_FILE; then
     # Determine default output directory - use source directory when OUTPUT_DIR not specified
@@ -603,7 +729,14 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
-    
+
+    # Apply jq transformation if specified for merged file
+    if [[ -n "$JQ_EXPRESSION" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
+      apply_jq_transform "$OUTPUT_FILENAME" "$JQ_EXPRESSION" || {
+        echo "Warning: jq transformation failed for $OUTPUT_FILENAME, continuing..." >&2
+      }
+    fi
+
     # POST to URL if specified for merged file
     if [[ -n "$POST_URL" && ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]]; then
       sleep "$HTTP_RATE_LIMIT_DELAY"  # Rate limiting
@@ -611,22 +744,29 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"
     done
     export HTTP_HEADERS_COUNT="${#HTTP_HEADERS[@]}"
     printf '%s\n' "${FILES[@]}" | xargs -n1 -P "$MAX_PARALLEL_JOBS" bash -c 'convert_file "$0"'
-    echo "🎉 All individual conversions complete."
+    echo -e "\n🎉 All individual conversions complete.\n"
   fi
 
 elif [[ -f "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3)://.+\.(parquet|csv|json|jsonl|ndjson)$ ]]; then
+  # Handle preview mode for single file
+  if (( PREVIEW_ROWS > 0 )); then
+    preview_file "$INPUT_PATH" "$PREVIEW_ROWS"
+    echo -e "🦆  DUCK SHARD PREVIEW 💯 DONE\n"
+    exit 0
+  fi
+
   convert_file "$INPUT_PATH"
-  echo "🎉 Conversion complete."
+  echo -e "\n🎉 Conversion complete.\n"
 else
   echo "Error: '$INPUT_PATH' is not a supported file or directory" >&2
   exit 1
 fi
 
-echo "💯 Done!"
+echo -e "🦆   DUCK SHARD JOB 💯 DONE\n"

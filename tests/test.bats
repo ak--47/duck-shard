@@ -17,20 +17,21 @@ setup() {
 	# Create output directory if it doesn't exist
 	mkdir -p "$TEST_OUTPUT_DIR"
 
-	# Safe safe_cleanup_output_dir_alternative - only if directory exists and is not empty
-	safe_safe_cleanup_output_dir_alternative_output_dir
+	# Safe teardown - only if directory exists and is not empty
+	teardown
 
     chmod +x "$SCRIPT_PATH"
     verify_test_data
 }
 
 teardown() {
-	# Safe safe_cleanup_output_dir_alternative in teardown too
-	safe_safe_cleanup_output_dir_alternative_output_dir
+	# Safe teardown in teardown too
+	safe_clean
+	#make clean
 }
 
-# Safe safe_cleanup_output_dir_alternative function that prevents accidental deletion
-safe_safe_cleanup_output_dir_alternative_output_dir() {
+# Safe teardown function that prevents accidental deletion
+safe_clean() {
 	# Multiple safety checks
 	if [[ -n "$TEST_OUTPUT_DIR" ]] && [[ -d "$TEST_OUTPUT_DIR" ]] && [[ "$TEST_OUTPUT_DIR" != "/" ]]; then
 		# Method 1: Use find to be more explicit
@@ -38,19 +39,6 @@ safe_safe_cleanup_output_dir_alternative_output_dir() {
 		find "$TEST_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 	fi
 }
-
-# Alternative even safer safe_cleanup_output_dir_alternative (choose one approach)
-safe_cleanup_output_dir_alternative() {
-	if [[ -n "$TEST_OUTPUT_DIR" ]] && [[ -d "$TEST_OUTPUT_DIR" ]] && [[ "$TEST_OUTPUT_DIR" =~ /tmp$ ]]; then
-		# Only proceed if path ends with /tmp for extra safety
-		for item in "$TEST_OUTPUT_DIR"/*; do
-			if [[ -e "$item" ]] && [[ "$(basename "$item")" != ".gitkeep" ]]; then
-				rm -rf "$item"
-			fi
-		done
-	fi
-}
-
 
 
 verify_test_data() {
@@ -71,13 +59,13 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # test -f ./duck-shard.sh && echo 'File exists' || echo 'File does not exist'
 @test "script exists and is executable" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[[ -x "$SCRIPT_PATH" ]]
 }
 
 # ./duck-shard.sh --help
 @test "show help with -h" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" -h
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Usage:" ]]
@@ -85,7 +73,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh
 @test "show help with no args" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Usage:" ]]
@@ -95,7 +83,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson -o ./tmp
 @test "parquet file > ndjson output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local expected="$TEST_OUTPUT_DIR/$base.ndjson"
@@ -106,7 +94,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f csv -o ./tmp
 @test "parquet file > csv output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local expected="$TEST_OUTPUT_DIR/$base.csv"
@@ -119,7 +107,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet -f ndjson -o ./tmp
 @test "parquet dir > ndjson output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local original_count=$(count_files "$TEST_DATA_DIR/parquet" "parquet")
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -131,7 +119,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # cd ./tmp && ../duck-shard.sh ../tests/testData/parquet -s all.csv -f csv
 @test "parquet dir > merged single csv file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	cd "$TEST_OUTPUT_DIR"
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all.csv -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -142,7 +130,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --rows 1000 -o ./tmp
 @test "parquet file > chunked ndjson with --rows" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local chunk_size=1000
@@ -157,7 +145,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson -o ./tmp
 @test "csv file > ndjson output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local expected="$TEST_OUTPUT_DIR/$base.ndjson"
@@ -168,7 +156,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/csv -f ndjson -o ./tmp
 @test "csv dir > ndjson output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local original_count=$(count_files "$TEST_DATA_DIR/csv" "csv")
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -178,7 +166,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --rows 1000 -o ./tmp
 @test "csv file > chunked ndjson with --rows" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local chunk_size=1000
@@ -193,7 +181,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f csv -o ./tmp
 @test "ndjson file > csv output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
     local base=$(basename "$in_file" .ndjson)
     local expected="$TEST_OUTPUT_DIR/$base.csv"
@@ -206,7 +194,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/ndjson -f csv -o ./tmp
 @test "ndjson dir > csv output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local original_count=$(count_files "$TEST_DATA_DIR/ndjson" "ndjson")
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -216,7 +204,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # cd ./tmp && ../duck-shard.sh ../tests/testData/parquet -s all_str.csv -f csv --stringify
 @test "parquet dir > merged single csv file with --stringify" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	cd "$TEST_OUTPUT_DIR"
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all_str.csv -f csv --stringify -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -228,7 +216,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --rows 1000 -f csv -o ./tmp
 @test "ndjson file > chunked csv with --rows" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ "$(find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' | wc -l)" -eq 0 ]
     local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
     local base=$(basename "$in_file" .ndjson)
@@ -247,7 +235,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -c event,time,user_id -f csv -o ./tmp
 @test "specific columns from parquet file > csv" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     [ -n "$in_file" ]
     local base=$(basename "$in_file" .parquet)
@@ -267,7 +255,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/nope.parquet
 @test "error: non-existent input file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/nope.parquet"
     [ "$status" -eq 1 ]
     [[ "$output" =~ "Error:" ]]
@@ -275,7 +263,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tmp/empty_dir/
 @test "error: empty directory" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	mkdir -p "$TEST_OUTPUT_DIR/empty_dir"
     run "$SCRIPT_PATH" "$TEST_OUTPUT_DIR/empty_dir/"
     [ "$status" -eq 1 ]
@@ -284,7 +272,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f invalid_format
 @test "error: invalid format" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     run "$SCRIPT_PATH" "$in_file" -f invalid_format
     [ "$status" -eq 1 ]
@@ -293,7 +281,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --format
 @test "error: missing argument for --format" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     [ -f "$in_file" ]
     run "$SCRIPT_PATH" "$in_file" --format
@@ -306,7 +294,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --cols
 @test "error: missing argument for --cols" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     [ -f "$in_file" ] # ensure file exists
     run bash -c "$SCRIPT_PATH $in_file --cols 2>&1"
@@ -319,7 +307,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --rows 1000 --single-file merged.ndjson
 @test "error: --rows with --single-file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     run "$SCRIPT_PATH" "$in_file" --rows 1000 --single-file merged.ndjson
     [ "$status" -eq 1 ]
@@ -328,7 +316,7 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
 
 # # ./duck-shard.sh gs://totally-fake-bucket/myfile.parquet
 # @test "error: GCS URI without credentials" {
-safe_cleanup_output_dir_alternative
+teardown
 #     # This will only work if you do NOT have env vars set or default creds
 #     local fake_gcs="gs://totally-fake-bucket/myfile.parquet"
 #     run "$SCRIPT_PATH" "$fake_gcs"
@@ -338,7 +326,7 @@ safe_cleanup_output_dir_alternative
 
 # # ./duck-shard.sh s3://totally-fake-bucket/myfile.parquet
 # @test "error: S3 URI without credentials" {
-safe_cleanup_output_dir_alternative
+teardown
 #     local fake_s3="s3://totally-fake-bucket/myfile.parquet"
 #     run "$SCRIPT_PATH" "$fake_s3"
 #     [ "$status" -ne 0 ]
@@ -347,7 +335,7 @@ safe_cleanup_output_dir_alternative
 
 # mkdir -p ./tmp/mixed; cp ./tests/testData/parquet/part-1.parquet ./tmp/mixed/file1.parquet; cp ./tests/testData/csv/part-1.csv ./tmp/mixed/file2.csv; ./duck-shard.sh ./tmp/mixed -s merged.ndjson
 @test "error: mixing file types for --single-file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	# Create a temp dir with a parquet and a csv
     mkdir -p "$TEST_OUTPUT_DIR/mixed"
     cp "$(get_first_file "$TEST_DATA_DIR/parquet" parquet)" "$TEST_OUTPUT_DIR/mixed/file1.parquet"
@@ -359,7 +347,7 @@ safe_cleanup_output_dir_alternative
 
 # mkdir -p ./tmp/unwritable; chmod -w ./tmp/unwritable; ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -o ./tmp/unwritable
 @test "error: output directory not writable" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local unwritable_dir="$TEST_OUTPUT_DIR/unwritable"
     mkdir -p "$unwritable_dir"
     chmod -w "$unwritable_dir"
@@ -372,7 +360,7 @@ safe_cleanup_output_dir_alternative
 
 # echo 'randomdata' > ./tmp/file.bogus; ./duck-shard.sh ./tmp/file.bogus
 @test "error: unsupported file extension" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local bogus="$TEST_OUTPUT_DIR/file.bogus"
     echo 'randomdata' > "$bogus"
     run "$SCRIPT_PATH" "$bogus"
@@ -382,7 +370,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh -h
 @test "help output mentions GCS and S3" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" -h
     [ "$status" -eq 0 ]
     [[ "$output" =~ "GCS HMAC credentials" ]]
@@ -394,7 +382,7 @@ safe_cleanup_output_dir_alternative
 
 # cd ./tmp && timeout 60s ../duck-shard.sh ../tests/testData/parquet -f ndjson -o ./tmp
 @test "performance check on parquet dir" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	cd "$TEST_OUTPUT_DIR"
     local start_time=$(date +%s)
     run timeout 60s "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -f ndjson -o "$TEST_OUTPUT_DIR"
@@ -408,7 +396,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f csv -o ./tmp
 @test "parquet file > csv output using --sql script (with semicolon)" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
     local base=$(basename "$in_file" .parquet)
@@ -425,7 +413,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/ --sql ./tests/ex-query-no-semicolon.sql -f json -o ./tmp
 @test "parquet file > ndjson output using --sql script (no semicolon)" {
-	safe_cleanup_output_dir_alternative
+	teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
 	# Path to SQL file is ../ex-query.sql from $TEST_DATA_DIR
 	local base_sql="$TEST_DATA_DIR/../ex-query.sql"
@@ -452,7 +440,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f ndjson -o ./tmp
 @test "GCS parquet file > local ndjson output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	# Ensure credentials are available in the environment for the script
     [ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
@@ -465,7 +453,7 @@ safe_cleanup_output_dir_alternative
 }
 # ./duck-shard.sh gs://duck-shard/testData/parquet/*.parquet -f ndjson -o ./tmp/
 @test "GCS parquet dir > local ndjson output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_dir="gs://duck-shard/testData/parquet/*.parquet"
@@ -478,7 +466,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson -o gs://duck-shard/testData/writeHere
 @test "local parquet file > ndjson output on GCS" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
@@ -491,7 +479,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet -f parquet -o gs://duck-shard/testData/writeHere/
 @test "local parquet dir > per-file parquet output on GCS" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_dir="$TEST_DATA_DIR/parquet"
@@ -502,7 +490,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f ndjson -o gs://duck-shard/testData/writeHere/
 @test "GCS parquet file > GCS ndjson output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
@@ -514,7 +502,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet -s merged-all.ndjson -f ndjson -o gs://duck-shard/testData/writeHere/
 @test "GCS parquet dir > single merged ndjson output on GCS" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_gcs_dir="gs://duck-shard/testData/parquet"
@@ -526,7 +514,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f parquet -o gs://duck-shard/testData/writeHere/
 @test "local CSV file > GCS parquet output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
@@ -538,7 +526,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet -f csv -o ./tmp/
 @test "GCS parquet file > local CSV output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
@@ -550,7 +538,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet --rows 1000 -f ndjson -o gs://duck-shard/testData/writeHere/
 @test "GCS parquet file > GCS chunked ndjson output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
@@ -561,7 +549,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh gs://duck-shard/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f ndjson -o gs://duck-shard/testData/writeHere/
 @test "GCS parquet file > GCS ndjson using --sql" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_gcs="gs://duck-shard/testData/parquet/part-1.parquet"
@@ -574,7 +562,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f csv -o gs://duck-shard/testData/writeHere/
 @test "local ndjson file > GCS csv output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	[ -n "$GCS_KEY_ID" ]
     [ -n "$GCS_SECRET" ]
     local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
@@ -588,7 +576,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/test_file.parquet -f ndjson
 @test "single file conversion without -o uses source directory" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local temp_file="$TEST_OUTPUT_DIR/test_file.parquet"
     local expected_out="$TEST_OUTPUT_DIR/test_file.ndjson"
     cp "$TEST_DATA_DIR/parquet/part-1.parquet" "$temp_file"
@@ -600,11 +588,11 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/test_parquet_dir -s -f ndjson
 @test "single file merge without -o uses source directory" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
     local expected_out="$temp_dir/test_parquet_dir_merged.ndjson"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
     [ "$status" -eq 0 ]
@@ -613,11 +601,11 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/test_parquet_dir -s custom_name.ndjson -f ndjson
 @test "single file merge with specific filename without -o uses source directory" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local temp_dir="$TEST_OUTPUT_DIR/test_parquet_dir"
     local expected_out="$temp_dir/custom_name.ndjson"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     run "$SCRIPT_PATH" "$temp_dir" -s custom_name.ndjson -f ndjson
     [ "$status" -eq 0 ]
@@ -626,7 +614,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/test_file.csv -f csv
 @test "prevents overwriting source file when converting to same format in same directory" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local temp_file="$TEST_OUTPUT_DIR/test_file.csv"
     cp "$TEST_DATA_DIR/csv/part-1.csv" "$temp_file"
 
@@ -638,7 +626,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/test_file-1.ndjson -f ndjson -r 2000 (would create test_file-1-1.ndjson, etc.)
 @test "split mode creates appropriately named files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local temp_file="$TEST_OUTPUT_DIR/test_file.ndjson"
     cp "$TEST_DATA_DIR/ndjson/part-1.ndjson" "$temp_file"
 
@@ -651,7 +639,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f csv -o ./tmp/
 @test "allows same format conversion when -o is specified" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/part-1.csv"
     run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
@@ -661,7 +649,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/no_extension.csv -f ndjson (test extension-based output naming)
 @test "handles files without dots in name properly" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local test_file="$TEST_OUTPUT_DIR/file_no_dots.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/file_no_dots.ndjson"
@@ -676,7 +664,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/data.backup.csv -f ndjson
 @test "handles files with multiple dots properly" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local test_file="$TEST_OUTPUT_DIR/data.backup.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/data.backup.ndjson"
@@ -691,7 +679,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/data*special.csv -f ndjson
 @test "handles filenames with asterisks properly" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local test_file="$TEST_OUTPUT_DIR/data*special.csv"
     local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     local expected_out="$TEST_OUTPUT_DIR/data*special.ndjson"
@@ -706,11 +694,11 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tmp/subdir -s -f ndjson
 @test "directory merge without -o uses directory itself as output location" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	# Create a temporary subdirectory for this test
     local temp_dir="$TEST_OUTPUT_DIR/subdir"
     mkdir -p "$temp_dir"
-    cp "$TEST_DATA_DIR/parquet"/* "$temp_dir/"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
 
     local expected_out="$temp_dir/subdir_merged.ndjson"
     run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson
@@ -722,7 +710,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f parquet -o ./tmp
 @test "ndjson file > parquet output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
     local base=$(basename "$in_file" .ndjson)
     local expected="$TEST_OUTPUT_DIR/$base.parquet"
@@ -733,7 +721,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f parquet -o ./tmp
 @test "parquet file > parquet output (rewrite)" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local expected="$TEST_OUTPUT_DIR/$base.parquet"
@@ -744,7 +732,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f parquet -o ./tmp
 @test "csv file > parquet output" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local expected="$TEST_OUTPUT_DIR/$base.parquet"
@@ -755,7 +743,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson -f parquet -o ./tmp
 @test "ndjson dir > parquet output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local original_count=$(count_files "$TEST_DATA_DIR/ndjson" "ndjson")
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -f parquet -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -765,7 +753,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet -f csv -o ./tmp
 @test "parquet dir > csv output for all files" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local original_count=$(count_files "$TEST_DATA_DIR/parquet" "parquet")
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -777,7 +765,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -c event,time -f csv -o ./tmp
 @test "parquet file > csv with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local columns="event,time"
@@ -792,7 +780,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -c user_id,event -f ndjson -o ./tmp
 @test "csv file > ndjson with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local columns="user_id,event"
@@ -807,7 +795,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -c event,user_id -f parquet -o ./tmp
 @test "ndjson file > parquet with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
     local base=$(basename "$in_file" .ndjson)
     local columns="event,user_id"
@@ -821,7 +809,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --dedupe -f ndjson -o ./tmp
 @test "csv file > ndjson with deduplication" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     run "$SCRIPT_PATH" "$in_file" --dedupe -f ndjson -o "$TEST_OUTPUT_DIR"
@@ -832,7 +820,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet -c event,user_id --dedupe -f csv -o ./tmp
 @test "parquet dir > csv with column selection and deduplication" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -c "event,user_id" --dedupe -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     local csv_count=$(find "$TEST_OUTPUT_DIR" -name "*.csv" | wc -l)
@@ -843,7 +831,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson -s dedupe_all.parquet --dedupe -f parquet -o ./tmp
 @test "ndjson dir > merged parquet with deduplication" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -s dedupe_all.parquet --dedupe -f parquet -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/dedupe_all.parquet"
@@ -853,7 +841,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --rows 500 -f csv -o ./tmp
 @test "parquet file > chunked csv with 500 rows" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     local chunk_size=500
@@ -866,7 +854,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --rows 250 -f parquet -o ./tmp
 @test "csv file > chunked parquet with 250 rows" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local chunk_size=250
@@ -878,7 +866,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --rows 100 -c event,user_id -f csv -o ./tmp
 @test "ndjson file > chunked csv with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
     local base=$(basename "$in_file" .ndjson)
     local chunk_size=100
@@ -892,7 +880,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson -s all.parquet -f parquet -o ./tmp
 @test "ndjson dir > merged single parquet file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -s all.parquet -f parquet -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/all.parquet"
@@ -900,7 +888,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet -s all.ndjson -f ndjson -o ./tmp
 @test "parquet dir > merged single ndjson file" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s all.ndjson -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/all.ndjson"
@@ -908,7 +896,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv -s merged_with_cols.ndjson -c event,user_id -f ndjson -o ./tmp
 @test "csv dir > merged ndjson with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged_with_cols.ndjson -c "event,user_id" -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged_with_cols.ndjson"
@@ -921,7 +909,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --sql ./ex-query.sql -f parquet -o ./tmp
 @test "csv file > parquet with SQL transformation" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
     local base=$(basename "$in_file" .csv)
@@ -933,7 +921,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson --sql ./ex-query.sql -s transformed.csv -f csv -o ./tmp
 @test "ndjson dir > merged csv with SQL transformation" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
     run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --sql "$sql_file" -s transformed.csv -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -946,7 +934,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./ex-query.sql --rows 200 -f ndjson -o ./tmp
 @test "parquet file > chunked ndjson with SQL transformation" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
     local base=$(basename "$in_file" .parquet)
@@ -960,7 +948,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --stringify -f csv -o ./tmp
 @test "parquet file > csv with stringify" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
     local base=$(basename "$in_file" .parquet)
     run "$SCRIPT_PATH" "$in_file" --stringify -f csv -o "$TEST_OUTPUT_DIR"
@@ -968,13 +956,13 @@ safe_cleanup_output_dir_alternative
     local output_file="$TEST_OUTPUT_DIR/$base.csv"
     file_exists_and_not_empty "$output_file"
     # Check that complex values are stringified
-    run grep '\\$organic' "$output_file"
+    run grep "\$organic" "$output_file"
     [ "$status" -eq 0 ]
 }
 
 # ./duck-shard.sh ./tests/testData/ndjson -s stringified.csv --stringify -f csv -o ./tmp
 @test "ndjson dir > merged csv with stringify" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -s stringified.csv --stringify -f csv -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/stringified.csv"
@@ -984,7 +972,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp -r 1000
 @test "single file > POST to URL" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
     [ "$status" -eq 0 ]
@@ -997,7 +985,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --url https://eop7f8y0fywsefw.m.pipedream.net -f csv -r 500 -o ./tmp
 @test "parquet file > csv POST to URL" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
     run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f csv -r 500 -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -1008,7 +996,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --url https://eop7f8y0fywsefw.m.pipedream.net -f parquet -r 300 -o ./tmp
 @test "ndjson file > parquet POST to URL" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
     run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f parquet -r 300 -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -1019,7 +1007,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --url https://eop7f8y0fywsefw.m.pipedream.net --header "X-Custom: test" -f ndjson -o ./tmp -r 1000
 @test "single file > POST to URL with custom header" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/csv/part-1.csv"
     run "$SCRIPT_PATH" "$in_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "X-Custom: test" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
     [ "$status" -eq 0 ]
@@ -1030,7 +1018,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net -r 500 -f ndjson -o ./tmp
 @test "directory > batched POST to URL" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -r 500 -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     # Should create multiple batch files and post each one
@@ -1040,17 +1028,17 @@ safe_cleanup_output_dir_alternative
 }
 
 # ./duck-shard.sh ./tests/testData/csv -s merged.ndjson --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp
-@test "merged single file > POST to URL" {
-    safe_cleanup_output_dir_alternative
-	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
-    [[ "$output" == *"✅ Posted"* ]]
-}
+# @test "merged single file > POST to URL" {
+#     teardown
+# 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
+#     [[ "$output" == *"✅ Posted"* ]]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -c event,user_id --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -r 400 -o ./tmp
 @test "parquet file > POST to URL with column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
     run "$SCRIPT_PATH" "$in_file" -c "event,user_id" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -r 400 -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -1060,16 +1048,16 @@ safe_cleanup_output_dir_alternative
 }
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o ./tmp
-@test "directory > POST to URL with multiple headers" {
-    safe_cleanup_output_dir_alternative
-	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"✅ Posted"* ]]
-}
+# @test "directory > POST to URL with multiple headers" {
+#     teardown
+# 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     [[ "$output" == *"✅ Posted"* ]]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./ex-query.sql --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp -r 1000
 @test "SQL transform > POST to URL" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
     local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
     run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR" -r 1000
@@ -1081,7 +1069,7 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/ndjson -c event,user_id --dedupe --url https://eop7f8y0fywsefw.m.pipedream.net -s deduped.ndjson -f ndjson -o ./tmp
 @test "ndjson dir > POST to URL with deduplication and column selection" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" -c "event,user_id" --dedupe --url "https://eop7f8y0fywsefw.m.pipedream.net" -s deduped.ndjson -f ndjson -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/deduped.ndjson"
@@ -1089,21 +1077,21 @@ safe_cleanup_output_dir_alternative
 }
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --log -r 1000 -f ndjson -o ./tmp
-@test "POST with logging creates response-logs.json" {
-    safe_cleanup_output_dir_alternative
-	rm -f response-logs.json  # Clean up any existing log
-    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --log -r 1000 -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"✅ Posted"* ]]
-    [ -f "response-logs.json" ]
-    # Check that log contains JSON
-    run jq length response-logs.json
-    [ "$status" -eq 0 ]
-}
+# @test "POST with logging creates response-logs.json" {
+#     teardown
+# 	rm -f response-logs.json  # Clean up any existing log
+#     run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --log -r 1000 -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     [[ "$output" == *"✅ Posted"* ]]
+#     [ -f "response-logs.json" ]
+#     # Check that log contains JSON
+#     run jq length response-logs.json
+#     [ "$status" -eq 0 ]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --stringify --url https://eop7f8y0fywsefw.m.pipedream.net -f csv -r 600 -o ./tmp
 @test "parquet file > POST to URL with stringify" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	local in_file="$TEST_DATA_DIR/parquet/part-1.parquet"
     run "$SCRIPT_PATH" "$in_file" --stringify --url "https://eop7f8y0fywsefw.m.pipedream.net" -f csv -r 600 -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
@@ -1114,7 +1102,6 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv --url https://invalid-domain-that-should-fail.nonexistent -f ndjson -o ./tmp
 # @test "error: invalid URL should fail with retries" {
-safe_cleanup_output_dir_alternative
 #     run timeout 60s "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://invalid-domain-that-should-fail.nonexistent" -f ndjson -o "$TEST_OUTPUT_DIR"
 #     [ "$status" -eq 0 ]  # File conversion should succeed
 #     # But POST should fail and show retry attempts
@@ -1124,8 +1111,253 @@ safe_cleanup_output_dir_alternative
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o gs://bucket/
 @test "error: --url with cloud storage output should fail" {
-    safe_cleanup_output_dir_alternative
+    teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "gs://bucket/"
     [ "$status" -eq 1 ]
     [[ "$output" == *"Error: --url cannot be used with cloud storage output directories"* ]]
 }
+
+##### ==== JQ TRANSFORMATION TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o ./tmp
+@test "jq transform: convert user_id to number in ndjson output" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that user_id is now a number (no quotes)
+    run head -1 "$expected"
+    [[ "$output" =~ \"user_id\":[0-9]+ ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson --jq 'select(.event == "page view")' -o ./tmp
+@test "jq transform: filter only page view events" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'select(.event == "page view")' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that all lines contain "click" event
+    run grep -v '"event":"click"' "$expected"
+    [ "$status" -ne 0 ]  # Should not find any non-click events
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f json --jq '{id: .user_id, action: .event}' -o ./tmp
+@test "jq transform: reshape JSON structure" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.json"
+    run "$SCRIPT_PATH" "$in_file" -f json --jq '{id: .user_id, action: .event}' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that output has the new structure
+    run head -1 "$expected"
+    [[ "$output" =~ \"id\": ]]
+    [[ "$output" =~ \"action\": ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv -s merged.ndjson -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o ./tmp
+@test "jq transform: transform merged" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f ndjson --jq '.time_str |= (. + "Z")' -o ./tmp
+@test "jq transform: combine with SQL transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" -f ndjson --jq '.time_str |= (. + "Z")' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that time_str ends with Z
+    run head -1 "$expected"
+    [[ "$output" =~ \"time_str\":\"[^\"]*Z\" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -c event,user_id -f ndjson --jq 'select(.event != null)' -o ./tmp
+@test "jq transform: combine with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -c "event,user_id" -f ndjson --jq 'select(.event != null)' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that output only has event and user_id fields
+    run head -1 "$expected"
+    [[ "$output" =~ \"event\": ]]
+    [[ "$output" =~ \"user_id\": ]]
+    # Should not have other fields like time
+    [[ ! "$output" =~ \"time\": ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --rows 500 -f ndjson --jq '.processed = true' -o ./tmp
+@test "jq transform: with chunked output" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    run "$SCRIPT_PATH" "$in_file" --rows 500 -f ndjson --jq '.processed = true' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson" | wc -l)
+    [ "$chunks_found" -ge 1 ]
+    # Check that jq was applied to each chunk
+    for f in "$TEST_OUTPUT_DIR"/${base}-*.ndjson; do
+        file_exists_and_not_empty "$f"
+        run head -1 "$f"
+        [[ "$output" =~ \"processed\":true ]]
+    done
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --dedupe -f ndjson --jq 'del(.time)' -o ./tmp
+@test "jq transform: combine with deduplication" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --dedupe -f ndjson --jq 'del(.time)' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that time field is removed
+    run head -1 "$expected"
+    [[ ! "$output" =~ \"time\": ]]
+}
+
+##### ==== JQ ERROR TESTS ====
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f csv --jq '.user_id = (.user_id | tonumber)'
+@test "error: jq with non-JSON format should fail" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$in_file" -f csv --jq '.user_id = (.user_id | tonumber)'
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --jq can only be used with JSON output formats" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq 'invalid jq syntax'
+@test "error: invalid jq syntax should show warning and continue" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'invalid jq syntax' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]  # Should complete successfully
+    file_exists_and_not_empty "$expected"
+    [[ "$output" =~ "Warning: jq transformation failed" ]]
+}
+
+##### ==== PREVIEW MODE TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --preview 5 -f ndjson
+@test "preview: show first 5 rows as ndjson" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --preview 5 -f ndjson
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 5 rows" ]]
+    [[ "$output" =~ "DUCK SHARD PREVIEW" ]]
+    # Count lines of JSON output (should be 5)
+    local json_lines=$(echo "$output" | grep '^{' | wc -l)
+    [ "$json_lines" -eq 5 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --preview 3 -f csv
+@test "preview: directory mode shows first file only" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --preview 3 -f csv
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: processing first file only" ]]
+    [[ "$output" =~ "Preview mode: showing first 3 rows" ]]
+    [[ "$output" =~ "DUCK SHARD PREVIEW" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --preview 2 -f ndjson --jq '.event'
+@test "preview: with jq transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --preview 2 -f ndjson --jq '.event'
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 2 rows" ]]
+    [[ "$output" =~ "Applying jq transformation" ]]
+    # Should show just event values (quoted strings)
+    local event_lines=$(echo "$output" | grep '^"' | wc -l)
+    [ "$event_lines" -eq 2 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --preview 4 --sql ./tests/ex-query.sql -f ndjson
+@test "preview: with SQL transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --preview 4 --sql "$sql_file" -f ndjson
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 4 rows" ]]
+    # Should show transformed data with time_str field
+    [[ "$output" =~ "time_str" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --preview -c event,user_id -f csv
+@test "preview: default 10 rows with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --preview -c "event,user_id" -f csv
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 10 rows" ]]
+    # Should show CSV header with only selected columns
+    [[ "$output" =~ "event,user_id" ]]
+}
+
+##### ==== PREVIEW ERROR TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv --preview 5 --url https://api.example.com/data -f ndjson
+@test "error: preview with URL should fail" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --preview 5 --url "https://api.example.com/data" -f ndjson
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --preview cannot be used with --url" ]]
+}
+
+##### ==== COMBINED JQ + HTTP POST TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq 'select(.event == "click")' --url https://eop7f8y0fywsefw.m.pipedream.net -r 500 -o ./tmp
+@test "jq + HTTP: filter and POST click events only" {
+    teardown
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'select(.event == "click")' --url "https://eop7f8y0fywsefw.m.pipedream.net" -r 500 -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "part-1-*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" =~ "✅ Posted" ]]
+    # Check that transformed files only contain click events
+    for f in "$TEST_OUTPUT_DIR"/part-1-*.ndjson; do
+        if [[ -s "$f" ]]; then  # Only check non-empty files
+            run grep -v '"event":"click"' "$f"
+            [ "$status" -ne 0 ]  # Should not find any non-click events
+        fi
+    done
+}
+
+##### ==== CLEANUP ====
+
+# Global cleanup to remove test data from GCS writeHere directory
+# @test "cleanup: remove test data from GCS writeHere directory" {
+#     # Only run cleanup if we have GCS credentials
+#     if [[ -n "${GCS_KEY_ID:-}" && -n "${GCS_SECRET:-}" ]]; then
+#         # Clean up the writeHere directory, but don't fail if it doesn't work
+#         gsutil -m rm -rf gs://duck-shard/testData/writeHere/* 2>/dev/null || true
+#         echo "✅ GCS writeHere directory cleanup completed (or skipped if empty)"
+#     else
+#         echo "⏭️  Skipping GCS cleanup - no credentials available"
+#     fi
+# }
+

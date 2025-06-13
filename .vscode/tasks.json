@@ -153,6 +153,113 @@
 					"message": 5
 				}
 			}
+		},
+		{
+			"label": "Deploy to Cloud Run",
+			"type": "shell",
+			"command": "chmod +x ./deploy.sh && ./deploy.sh",
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": [],
+			"detail": "🦆 Make deploy.sh executable and deploy duck-shard API to Cloud Run",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"icon": {
+				"id": "cloud-upload",
+				"color": "terminal.ansiBlue"
+			}
+		},
+		{
+			"label": "Start Local API Server",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "dev"],
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "dedicated",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": [],
+			"detail": "🚀 Start the duck-shard API server locally with hot reload",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"icon": {
+				"id": "server-process",
+				"color": "terminal.ansiGreen"
+			}
+		},
+		{
+			"label": "Test API Locally",
+			"type": "shell",
+			"command": "node",
+			"args": ["example-client.mjs", "http://localhost:8080"],
+			"group": {
+				"kind": "test",
+				"isDefault": false
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": [],
+			"detail": "🧪 Test the duck-shard API running locally",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"icon": {
+				"id": "beaker",
+				"color": "terminal.ansiYellow"
+			}
+		},
+		{
+			"label": "Build Docker Image",
+			"type": "shell",
+			"command": "docker",
+			"args": ["build", "-t", "duck-shard-api", "."],
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": [],
+			"detail": "🐳 Build the Docker image locally for testing",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"icon": {
+				"id": "package",
+				"color": "terminal.ansiCyan"
+			}
 		}
 	]
 }

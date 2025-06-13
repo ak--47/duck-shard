@@ -22,6 +22,7 @@ check-deps:
 	@echo "Checking dependencies..."
 	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not installed"; exit 1; }
 	@command -v duckdb >/dev/null 2>&1 || { echo "❌ duckdb not installed"; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { echo "❌ jq not installed"; exit 1; }
 	@echo "✅ All dependencies available"
 
 # Run all tests
@@ -49,18 +50,18 @@ install-deps:
 	@echo "🔧 Installing dependencies..."
 	@if command -v brew >/dev/null 2>&1; then \
 		echo "📦 Installing via Homebrew..."; \
-		brew install bats-core duckdb; \
+		brew install bats-core duckdb jq; \
 	elif command -v apt-get >/dev/null 2>&1; then \
 		echo "📦 Installing via apt-get..."; \
 		sudo apt-get update; \
-		sudo apt-get install -y bats; \
+		sudo apt-get install -y bats jq; \
 		echo "📦 Installing DuckDB..."; \
 		wget -q https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip; \
 		unzip -q duckdb_cli-linux-amd64.zip; \
 		sudo mv duckdb /usr/local/bin/; \
 		rm duckdb_cli-linux-amd64.zip; \
 	else \
-		echo "❌ Unsupported package manager. Please install bats and duckdb manually."; \
+		echo "❌ Unsupported package manager. Please install bats, duckdb, and jq manually."; \
 		exit 1; \
 	fi
 	@echo "✅ Dependencies installed"
@@ -72,6 +73,8 @@ clean:
 	@find . -name "test_temp_*" -type d -exec rm -rf {} + 2>/dev/null || true
 	@find ./tmp -type f ! -name '.gitkeep' -exec rm -f {} + 2>/dev/null || true
 	@rm -f ./tests/response-logs.json 2>/dev/null || true
+	@rm -f ./response-logs.json 2>/dev/null || true
+	@find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
 # Quick test for CI/CD
