@@ -1120,7 +1120,7 @@ teardown
 ##### ==== JQ TRANSFORMATION TESTS ====
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o ./tmp
-@test "jq transform: convert user_id to number in ndjson output" {
+@test "jq transform: remove hyphens from userid" {
     teardown
     local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
@@ -1128,9 +1128,9 @@ teardown
     run "$SCRIPT_PATH" "$in_file" -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected"
-    # Check that user_id is now a number (no quotes)
-    run head -1 "$expected"
-    [[ "$output" =~ \"user_id\":[0-9]+ ]]
+   # check that user_id has no hyphens
+	run grep -E '"user_id":"[^-]*"' "$expected"
+	[ "$status" -eq 0 ]
 }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson --jq 'select(.event == "page view")' -o ./tmp
@@ -1143,7 +1143,7 @@ teardown
     [ "$status" -eq 0 ]
     file_exists_and_not_empty "$expected"
     # Check that all lines contain "click" event
-    run grep -v '"event":"click"' "$expected"
+    run grep -v '"event":"page view"' "$expected"
     [ "$status" -ne 0 ]  # Should not find any non-click events
 }
 
