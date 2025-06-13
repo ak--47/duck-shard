@@ -22,7 +22,12 @@
 	"terminal.integrated.defaultProfile.osx": "bash",
 	"cSpell.words": [
 		"HMAC",
+		"httpfs",
+		"infile",
+		"ncpu",
+		"outbase",
 		"randomdata",
+		"tonumber",
 		"unwritable"
 	]
 }

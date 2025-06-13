@@ -5,7 +5,7 @@ A DuckDB CLI wrapper offered as swiss army knife which allows you to "batch ever
 convert, transform, and stream data to HTTP APIs with zero DevOps overhead. No cloud. No Python, no JVM, no drama.
 
 convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**, **CSV**, or **Parquet**.
-*Stream processed data directly to HTTP endpoints. Deduplicate. Merge. Split into shards. Parallelize across all CPU cores.*  It's great fun!
+*Stream processed data directly to HTTP endpoints. Apply JSON transformations with jq. Preview data before processing. Deduplicate. Merge. Split into shards. Parallelize across all CPU cores.*  It's great fun!
 
 **Cross-platform, no Python, no JVM, no drama.**
 
@@ -20,7 +20,11 @@ convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**,
 
 **☁️ Cloud Native:** Read from and write to GCS, S3, or local storage seamlessly.
 
-**📦 Zero Dependencies:** Just DuckDB + bash. No Python environments, no JVM heap tuning.
+**🎯 JSON Transformations:** Apply powerful jq transformations to JSON data in real-time.
+
+**🔍 Preview Mode:** Test transformations on sample data before full processing.
+
+**📦 Zero Dependencies:** Just DuckDB + jq + bash. No Python environments, no JVM heap tuning.
 
 ---
 
@@ -28,7 +32,7 @@ convert folders or files of **Parquet**, **CSV**, or **NDJSON** into **NDJSON**,
 
 **Install:**
 ```bash
-brew install duckdb  # or download from duckdb.org
+brew install duckdb jq  # or download from duckdb.org and jqlang.org
 curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
 chmod +x duck-shard.sh
 ```
@@ -43,6 +47,18 @@ formats supported: `ndjson`, `csv`, `parquet` ... all interchangeable
 ```bash
 ./duck-shard.sh ./data/ --url https://api.example.com/events \
   --header "Authorization: Bearer token123" --rows 1000 # Stream 1k rows per batch
+```
+
+**JSON Transformations:**
+```bash
+./duck-shard.sh ./events.csv -f ndjson \
+  --jq 'select(.event == "purchase") | {user: .user_id, amount: (.revenue | tonumber)}' \
+  -o ./processed/
+```
+
+**Preview Mode:**
+```bash
+./duck-shard.sh ./large_dataset.parquet --preview 10 -f csv  # Preview first 10 rows
 ```
 
 ## 🌐 **HTTP API Streaming**
@@ -124,6 +140,8 @@ cat response-logs.json | jq '.[].http_code'
 | `-c col1,col2`     | Select only specific columns                       |
 | `--dedupe`         | Remove duplicate rows                              |
 | `--sql file.sql`   | Apply SQL transformation                           |
+| `--jq <expression>`| Apply jq transformation to JSON output            |
+| `--preview [N]`    | Preview first N rows (default 10), don't write    |
 
 ### **HTTP API Options**
 
@@ -263,6 +281,121 @@ ORDER BY timestamp;
 
 ---
 
+## 🎯 **JSON Transformations with jq**
+
+Apply powerful JSON transformations using [jq](https://jqlang.org/) expressions. Works with any JSON output format (`ndjson`, `json`, `jsonl`).
+
+### **Filter & Transform**
+```bash
+# Filter only purchase events and reshape structure
+./duck-shard.sh ./events.csv -f ndjson \
+  --jq 'select(.event_type == "purchase") | {
+    user: .user_id,
+    revenue: (.amount | tonumber),
+    timestamp: .created_at
+  }' -o ./purchases/
+```
+
+### **Data Type Conversions**
+```bash
+# Convert string numbers to actual numbers
+./duck-shard.sh ./analytics.parquet -f ndjson \
+  --jq '.user_id = (.user_id | tonumber) | .revenue = (.revenue | tonumber)' \
+  -o ./typed_data/
+```
+
+### **Complex Filtering**
+```bash
+# Filter high-value customers and add calculated fields
+./duck-shard.sh ./customers.csv -f ndjson \
+  --jq 'select(.lifetime_value | tonumber > 1000) | 
+        . + {segment: "premium", processed_at: now}' \
+  -o ./premium_customers/
+```
+
+### **Combine with SQL + jq**
+```bash
+# SQL transformation followed by jq reshaping
+./duck-shard.sh ./raw_events.parquet \
+  --sql ./sql/aggregate_by_user.sql \
+  -f ndjson \
+  --jq '{
+    user_id: .user_id,
+    metrics: {
+      total_events: .event_count,
+      revenue: .total_revenue,
+      last_active: .last_event_time
+    },
+    tags: [.segment, .region]
+  }' \
+  --url https://api.analytics.com/users
+```
+
+### **Stream Filtered Data to APIs**
+```bash
+# Filter and stream only error events to monitoring system
+./duck-shard.sh ./app_logs.ndjson \
+  --jq 'select(.level == "ERROR") | {
+    message: .msg,
+    timestamp: .time,
+    service: .service_name,
+    stack_trace: .stack
+  }' \
+  --url https://monitoring.company.com/errors \
+  --header "Authorization: Bearer ${MONITOR_TOKEN}" \
+  -r 100
+```
+
+---
+
+## 🔍 **Preview Mode**
+
+Test your transformations on sample data before processing entire datasets.
+
+### **Basic Preview**
+```bash
+# Preview first 10 rows (default)
+./duck-shard.sh ./large_dataset.parquet --preview -f csv
+
+# Preview specific number of rows
+./duck-shard.sh ./events.csv --preview 5 -f ndjson
+```
+
+### **Preview with Transformations**
+```bash
+# Test SQL transformations
+./duck-shard.sh ./raw_data.parquet \
+  --preview 20 \
+  --sql ./complex_transform.sql \
+  -f ndjson
+
+# Test jq transformations
+./duck-shard.sh ./events.csv \
+  --preview 3 \
+  -f ndjson \
+  --jq 'select(.event == "click") | {user: .user_id, page: .page_url}'
+```
+
+### **Preview for Development**
+```bash
+# Test complete pipeline before production run
+./duck-shard.sh ./production_data.parquet \
+  --preview 50 \
+  --sql ./transforms/clean_data.sql \
+  -f ndjson \
+  --jq 'select(.is_valid == true) | del(.internal_fields)' \
+  -c user_id,event_type,timestamp
+```
+
+**Preview mode:**
+- ✅ Processes only the first N rows (much faster)
+- ✅ Shows exact output format you'll get
+- ✅ Works with all transformations (SQL, jq, column selection)
+- ✅ No files written to disk
+- ✅ Perfect for testing and development
+
+---
+
 ## 🚀 **Performance & Features**
 
 * **🔥 Parallel Processing:** Utilize all CPU cores automatically
@@ -280,7 +413,7 @@ ORDER BY timestamp;
 
 ### **Homebrew (macOS/Linux)**
 ```bash
-brew install duckdb
+brew install duckdb jq
 brew tap ak--47/duck-shard
 brew install duck-shard
 ```
@@ -290,6 +423,11 @@ brew install duck-shard
 # Install DuckDB
 curl -L https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip -o duckdb.zip
 unzip duckdb.zip && sudo mv duckdb /usr/local/bin/
+
+# Install jq
+sudo apt-get install jq  # Ubuntu/Debian
+# or
+brew install jq  # macOS
 
 # Install duck-shard
 curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
@@ -317,6 +455,8 @@ Tests cover:
 - HTTP API streaming with various configurations
 - Cloud storage integration (GCS, S3)
 - SQL transformations
+- jq JSON transformations and filtering
+- Preview mode functionality
 - Error handling and edge cases
 - Performance and parallel processing
 

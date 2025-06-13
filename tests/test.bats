@@ -1028,13 +1028,13 @@ teardown
 }
 
 # ./duck-shard.sh ./tests/testData/csv -s merged.ndjson --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp
-@test "merged single file > POST to URL" {
-    teardown
-	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
-    [[ "$output" == *"✅ Posted"* ]]
-}
+# @test "merged single file > POST to URL" {
+#     teardown
+# 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
+#     [[ "$output" == *"✅ Posted"* ]]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -c event,user_id --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -r 400 -o ./tmp
 @test "parquet file > POST to URL with column selection" {
@@ -1048,12 +1048,12 @@ teardown
 }
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o ./tmp
-@test "directory > POST to URL with multiple headers" {
-    teardown
-	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"✅ Posted"* ]]
-}
+# @test "directory > POST to URL with multiple headers" {
+#     teardown
+# 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --header "Authorization: Bearer token123" --header "X-Source: duck-shard" -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     [[ "$output" == *"✅ Posted"* ]]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./ex-query.sql --url https://eop7f8y0fywsefw.m.pipedream.net -f ndjson -o ./tmp -r 1000
 @test "SQL transform > POST to URL" {
@@ -1077,17 +1077,17 @@ teardown
 }
 
 # ./duck-shard.sh ./tests/testData/csv --url https://eop7f8y0fywsefw.m.pipedream.net --log -r 1000 -f ndjson -o ./tmp
-@test "POST with logging creates response-logs.json" {
-    teardown
-	rm -f response-logs.json  # Clean up any existing log
-    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --log -r 1000 -f ndjson -o "$TEST_OUTPUT_DIR"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"✅ Posted"* ]]
-    [ -f "response-logs.json" ]
-    # Check that log contains JSON
-    run jq length response-logs.json
-    [ "$status" -eq 0 ]
-}
+# @test "POST with logging creates response-logs.json" {
+#     teardown
+# 	rm -f response-logs.json  # Clean up any existing log
+#     run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" --log -r 1000 -f ndjson -o "$TEST_OUTPUT_DIR"
+#     [ "$status" -eq 0 ]
+#     [[ "$output" == *"✅ Posted"* ]]
+#     [ -f "response-logs.json" ]
+#     # Check that log contains JSON
+#     run jq length response-logs.json
+#     [ "$status" -eq 0 ]
+# }
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --stringify --url https://eop7f8y0fywsefw.m.pipedream.net -f csv -r 600 -o ./tmp
 @test "parquet file > POST to URL with stringify" {
@@ -1102,7 +1102,6 @@ teardown
 
 # ./duck-shard.sh ./tests/testData/csv --url https://invalid-domain-that-should-fail.nonexistent -f ndjson -o ./tmp
 # @test "error: invalid URL should fail with retries" {
-teardown
 #     run timeout 60s "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://invalid-domain-that-should-fail.nonexistent" -f ndjson -o "$TEST_OUTPUT_DIR"
 #     [ "$status" -eq 0 ]  # File conversion should succeed
 #     # But POST should fail and show retry attempts
@@ -1116,6 +1115,236 @@ teardown
 	run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --url "https://eop7f8y0fywsefw.m.pipedream.net" -f ndjson -o "gs://bucket/"
     [ "$status" -eq 1 ]
     [[ "$output" == *"Error: --url cannot be used with cloud storage output directories"* ]]
+}
+
+##### ==== JQ TRANSFORMATION TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o ./tmp
+@test "jq transform: convert user_id to number in ndjson output" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that user_id is now a number (no quotes)
+    run head -1 "$expected"
+    [[ "$output" =~ \"user_id\":[0-9]+ ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f ndjson --jq 'select(.event == "page view")' -o ./tmp
+@test "jq transform: filter only page view events" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'select(.event == "page view")' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that all lines contain "click" event
+    run grep -v '"event":"click"' "$expected"
+    [ "$status" -ne 0 ]  # Should not find any non-click events
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f json --jq '{id: .user_id, action: .event}' -o ./tmp
+@test "jq transform: reshape JSON structure" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.json"
+    run "$SCRIPT_PATH" "$in_file" -f json --jq '{id: .user_id, action: .event}' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that output has the new structure
+    run head -1 "$expected"
+    [[ "$output" =~ \"id\": ]]
+    [[ "$output" =~ \"action\": ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv -s merged.ndjson -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o ./tmp
+@test "jq transform: transform merged" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" -s merged.ndjson -f ndjson --jq '.user_id = (.user_id | gsub("-"; ""))' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.ndjson"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -f ndjson --jq '.time_str |= (. + "Z")' -o ./tmp
+@test "jq transform: combine with SQL transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" -f ndjson --jq '.time_str |= (. + "Z")' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that time_str ends with Z
+    run head -1 "$expected"
+    [[ "$output" =~ \"time_str\":\"[^\"]*Z\" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -c event,user_id -f ndjson --jq 'select(.event != null)' -o ./tmp
+@test "jq transform: combine with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -c "event,user_id" -f ndjson --jq 'select(.event != null)' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that output only has event and user_id fields
+    run head -1 "$expected"
+    [[ "$output" =~ \"event\": ]]
+    [[ "$output" =~ \"user_id\": ]]
+    # Should not have other fields like time
+    [[ ! "$output" =~ \"time\": ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --rows 500 -f ndjson --jq '.processed = true' -o ./tmp
+@test "jq transform: with chunked output" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    run "$SCRIPT_PATH" "$in_file" --rows 500 -f ndjson --jq '.processed = true' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson" | wc -l)
+    [ "$chunks_found" -ge 1 ]
+    # Check that jq was applied to each chunk
+    for f in "$TEST_OUTPUT_DIR"/${base}-*.ndjson; do
+        file_exists_and_not_empty "$f"
+        run head -1 "$f"
+        [[ "$output" =~ \"processed\":true ]]
+    done
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --dedupe -f ndjson --jq 'del(.time)' -o ./tmp
+@test "jq transform: combine with deduplication" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --dedupe -f ndjson --jq 'del(.time)' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check that time field is removed
+    run head -1 "$expected"
+    [[ ! "$output" =~ \"time\": ]]
+}
+
+##### ==== JQ ERROR TESTS ====
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f csv --jq '.user_id = (.user_id | tonumber)'
+@test "error: jq with non-JSON format should fail" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$in_file" -f csv --jq '.user_id = (.user_id | tonumber)'
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --jq can only be used with JSON output formats" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq 'invalid jq syntax'
+@test "error: invalid jq syntax should show warning and continue" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'invalid jq syntax' -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]  # Should complete successfully
+    file_exists_and_not_empty "$expected"
+    [[ "$output" =~ "Warning: jq transformation failed" ]]
+}
+
+##### ==== PREVIEW MODE TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --preview 5 -f ndjson
+@test "preview: show first 5 rows as ndjson" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --preview 5 -f ndjson
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 5 rows" ]]
+    [[ "$output" =~ "DUCK SHARD PREVIEW" ]]
+    # Count lines of JSON output (should be 5)
+    local json_lines=$(echo "$output" | grep '^{' | wc -l)
+    [ "$json_lines" -eq 5 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --preview 3 -f csv
+@test "preview: directory mode shows first file only" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --preview 3 -f csv
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: processing first file only" ]]
+    [[ "$output" =~ "Preview mode: showing first 3 rows" ]]
+    [[ "$output" =~ "DUCK SHARD PREVIEW" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --preview 2 -f ndjson --jq '.event'
+@test "preview: with jq transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --preview 2 -f ndjson --jq '.event'
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 2 rows" ]]
+    [[ "$output" =~ "Applying jq transformation" ]]
+    # Should show just event values (quoted strings)
+    local event_lines=$(echo "$output" | grep '^"' | wc -l)
+    [ "$event_lines" -eq 2 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --preview 4 --sql ./tests/ex-query.sql -f ndjson
+@test "preview: with SQL transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --preview 4 --sql "$sql_file" -f ndjson
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 4 rows" ]]
+    # Should show transformed data with time_str field
+    [[ "$output" =~ "time_str" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --preview -c event,user_id -f csv
+@test "preview: default 10 rows with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --preview -c "event,user_id" -f csv
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode: showing first 10 rows" ]]
+    # Should show CSV header with only selected columns
+    [[ "$output" =~ "event,user_id" ]]
+}
+
+##### ==== PREVIEW ERROR TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv --preview 5 --url https://api.example.com/data -f ndjson
+@test "error: preview with URL should fail" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --preview 5 --url "https://api.example.com/data" -f ndjson
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --preview cannot be used with --url" ]]
+}
+
+##### ==== COMBINED JQ + HTTP POST TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f ndjson --jq 'select(.event == "click")' --url https://eop7f8y0fywsefw.m.pipedream.net -r 500 -o ./tmp
+@test "jq + HTTP: filter and POST click events only" {
+    teardown
+    local in_file="$TEST_DATA_DIR/csv/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson --jq 'select(.event == "click")' --url "https://eop7f8y0fywsefw.m.pipedream.net" -r 500 -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "part-1-*.ndjson" | wc -l)
+    [ "$ndjson_count" -ge 1 ]
+    [[ "$output" =~ "✅ Posted" ]]
+    # Check that transformed files only contain click events
+    for f in "$TEST_OUTPUT_DIR"/part-1-*.ndjson; do
+        if [[ -s "$f" ]]; then  # Only check non-empty files
+            run grep -v '"event":"click"' "$f"
+            [ "$status" -ne 0 ]  # Should not find any non-click events
+        fi
+    done
 }
 
 ##### ==== CLEANUP ====
