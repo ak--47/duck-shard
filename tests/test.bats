@@ -1347,6 +1347,284 @@ teardown
     done
 }
 
+##### ==== PREFIX/SUFFIX FILENAME TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --prefix "proc_" -f ndjson -o ./tmp
+@test "prefix: single file with prefix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/proc_$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --prefix "proc_" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --suffix "_clean" -f csv -o ./tmp
+@test "suffix: single file with suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/${base}_clean.csv"
+    run "$SCRIPT_PATH" "$in_file" --suffix "_clean" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --prefix "test_" --suffix "_processed" -f parquet -o ./tmp
+@test "prefix+suffix: single file with both prefix and suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/test_${base}_processed.parquet"
+    run "$SCRIPT_PATH" "$in_file" --prefix "test_" --suffix "_processed" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/csv --prefix "batch_" -f ndjson -o ./tmp
+@test "prefix: directory conversion with prefix" {
+    teardown
+    local original_count=$(count_files "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --prefix "batch_" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "batch_*.ndjson" | wc -l)
+    [ "$ndjson_count" -eq "$original_count" ]
+    local first_file=$(find "$TEST_OUTPUT_DIR" -name "batch_*.ndjson" | head -1)
+    file_exists_and_not_empty "$first_file"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --suffix "_final" -f csv -o ./tmp
+@test "suffix: directory conversion with suffix" {
+    teardown
+    local original_count=$(count_files "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --suffix "_final" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local csv_count=$(find "$TEST_OUTPUT_DIR" -name "*_final.csv" | wc -l)
+    [ "$csv_count" -eq "$original_count" ]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson --prefix "daily_" --suffix "_report" -f parquet -o ./tmp
+@test "prefix+suffix: directory conversion with both" {
+    teardown
+    local original_count=$(count_files "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --prefix "daily_" --suffix "_report" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local parquet_count=$(find "$TEST_OUTPUT_DIR" -name "daily_*_report.parquet" | wc -l)
+    [ "$parquet_count" -eq "$original_count" ]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --rows 500 --prefix "chunk_" --suffix "_data" -f ndjson -o ./tmp
+@test "prefix+suffix: chunked output with prefix and suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    run "$SCRIPT_PATH" "$in_file" --rows 500 --prefix "chunk_" --suffix "_data" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "chunk_${base}-*_data.ndjson" | wc -l)
+    [ "$chunks_found" -ge 1 ]
+    for f in "$TEST_OUTPUT_DIR"/chunk_${base}-*_data.ndjson; do file_exists_and_not_empty "$f"; done
+}
+
+# ./duck-shard.sh ./tests/testData/parquet -s --prefix "merged_" --suffix "_all" -f ndjson -o ./tmp
+@test "prefix+suffix: single file merge with prefix and suffix" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" -s --prefix "merged_" --suffix "_all" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged_parquet_merged_all.ndjson"
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --sql ./tests/ex-query.sql --prefix "sql_" --suffix "_result" -f ndjson -o ./tmp
+@test "prefix+suffix: SQL transformation with prefix and suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/sql_${base}_result.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --prefix "sql_" --suffix "_result" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+##### ==== ANALYTICAL QUERY MODE TESTS ====
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql -o ./tmp
+@test "analytical mode: single file query without format" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "DUCK SHARD ANALYTICAL QUERY" ]]
+    [[ "$output" =~ "Executing query and displaying results" ]]
+    [[ "$output" =~ "DUCK SHARD ANALYSIS" ]]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/query_result.csv"
+}
+
+# ./duck-shard.sh ./tests/testData/csv --sql ./tests/ex-query.sql -o ./tmp
+@test "analytical mode: directory query without format" {
+    teardown
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --sql "$sql_file" -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "DUCK SHARD ANALYTICAL QUERY" ]]
+    [[ "$output" =~ "Running analytical query on data" ]]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/query_result.csv"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql --prefix "analysis_" --suffix "_report" -o ./tmp
+@test "analytical mode: with prefix and suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --prefix "analysis_" --suffix "_report" -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "DUCK SHARD ANALYTICAL QUERY" ]]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/analysis_query_result_report.csv"
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --sql ./tests/ex-query.sql
+@test "analytical mode: no output directory uses current directory" {
+    teardown
+    cd "$TEST_OUTPUT_DIR"
+    local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "DUCK SHARD ANALYTICAL QUERY" ]]
+    file_exists_and_not_empty "query_result.csv"
+}
+
+##### ==== ANALYTICAL MODE ERROR TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv --sql ./tests/ex-query.sql --url https://api.example.com/data
+@test "error: analytical mode with URL should fail" {
+    teardown
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv" --sql "$sql_file" --url "https://api.example.com/data"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --url cannot be used in analytical query mode" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --sql ./tests/ex-query.sql --single-file merged.csv
+@test "error: analytical mode with single-file should fail" {
+    teardown
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --sql "$sql_file" --single-file merged.csv
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --single-file cannot be used in analytical query mode" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --sql ./tests/ex-query.sql --rows 1000
+@test "error: analytical mode with rows should fail" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --rows 1000
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --rows cannot be used in analytical query mode" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --sql ./tests/ex-query.sql --preview 5
+@test "error: analytical mode with preview should fail" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --preview 5
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --preview cannot be used in analytical query mode" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --sql ./tests/ex-query.sql --jq '.event'
+@test "error: analytical mode with jq should fail" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local sql_file="$PROJECT_ROOT/tests/ex-query.sql"
+    run "$SCRIPT_PATH" "$in_file" --sql "$sql_file" --jq '.event'
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --jq cannot be used in analytical query mode" ]]
+}
+
+##### ==== GLOB PATTERN NAMING TESTS ====
+
+# ./duck-shard.sh ./tmp/test*dir -s -f ndjson -o ./tmp
+@test "glob naming: directory with asterisk in name gets cleaned" {
+    teardown
+    local temp_dir="$TEST_OUTPUT_DIR/test*dir"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/csv"/*.csv "$temp_dir/"
+    run "$SCRIPT_PATH" "$temp_dir" -s -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Should create testmergeddir_merged.ndjson (asterisk replaced with "merged")
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/testmergeddir_merged.ndjson"
+}
+
+# ./duck-shard.sh ./tmp/data?files -s --prefix "clean_" -f csv -o ./tmp
+@test "glob naming: directory with question mark gets cleaned with prefix" {
+    teardown
+    local temp_dir="$TEST_OUTPUT_DIR/data?files"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/parquet"/*.parquet "$temp_dir/"
+    run "$SCRIPT_PATH" "$temp_dir" -s --prefix "clean_" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Should create clean_dataunknownfiles_merged.csv (? replaced with "unknown")
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/clean_dataunknownfiles_merged.csv"
+}
+
+# ./duck-shard.sh ./tmp/data[backup] -s --suffix "_final" -f ndjson -o ./tmp
+@test "glob naming: directory with brackets gets cleaned with suffix" {
+    teardown
+    local temp_dir="$TEST_OUTPUT_DIR/data[backup]"
+    mkdir -p "$temp_dir"
+    cp "$TEST_DATA_DIR/ndjson"/*.ndjson "$temp_dir/"
+    run "$SCRIPT_PATH" "$temp_dir" -s --suffix "_final" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Should create databackup_merged_final.ndjson (brackets removed)
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/databackup_merged_final.ndjson"
+}
+
+##### ==== HELP TEXT VERIFICATION ====
+
+# ./duck-shard.sh --help
+@test "help: mentions new prefix and suffix options" {
+    teardown
+    run "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--prefix" ]]
+    [[ "$output" =~ "--suffix" ]]
+    [[ "$output" =~ "Add prefix to output filenames" ]]
+    [[ "$output" =~ "Add suffix to output filenames" ]]
+}
+
+# ./duck-shard.sh --help
+@test "help: shows analytical query example" {
+    teardown
+    run "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Analytical query mode" ]]
+    [[ "$output" =~ "sql analysis.sql -o ./results/" ]]
+}
+
+##### ==== ERROR VALIDATION TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --prefix
+@test "error: missing argument for --prefix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --prefix
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --prefix needs an argument" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --suffix
+@test "error: missing argument for --suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$in_file" --suffix
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --suffix needs an argument" ]]
+}
+
 ##### ==== CLEANUP ====
 
 # Global cleanup to remove test data from GCS writeHere directory

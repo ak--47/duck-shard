@@ -139,9 +139,11 @@ cat response-logs.json | jq '.[].http_code'
 | `-s [filename]`    | Merge everything into single file                 |
 | `-c col1,col2`     | Select only specific columns                       |
 | `--dedupe`         | Remove duplicate rows                              |
-| `--sql file.sql`   | Apply SQL transformation                           |
+| `--sql file.sql`   | Apply SQL transformation (or analytical query)    |
 | `--jq <expression>`| Apply jq transformation to JSON output            |
 | `--preview [N]`    | Preview first N rows (default 10), don't write    |
+| `--prefix <text>`  | Add prefix to all output filenames                |
+| `--suffix <text>`  | Add suffix to output filenames (before extension) |
 
 ### **HTTP API Options**
 
@@ -212,6 +214,24 @@ cat response-logs.json | jq '.[].http_code'
   -f ndjson -r 10 --verbose
 ```
 
+### **Custom Filename Organization**
+```bash
+# Add prefixes and suffixes for organized output
+./duck-shard.sh ./daily_events/ \
+  --prefix "processed_" \
+  --suffix "_clean" \
+  -f csv -o ./output/
+# Creates: processed_events-1_clean.csv, processed_events-2_clean.csv, etc.
+
+# Analytical query with custom naming
+./duck-shard.sh ./sales_data.parquet \
+  --sql ./reports/quarterly_analysis.sql \
+  --prefix "Q2_2024_" \
+  --suffix "_report" \
+  -o ./reports/
+# Creates: Q2_2024_query_result_report.csv
+```
+
 ---
 
 ## 🌩️ **Cloud Storage Support**
@@ -235,6 +255,60 @@ Read from and write to **Google Cloud Storage** and **Amazon S3**:
   --gcs-key YOUR_KEY --gcs-secret YOUR_SECRET \
   -f parquet -o gs://output-bucket/results/
 ```
+
+---
+
+## 📊 **Analytical Query Mode**
+
+When you provide `--sql` without specifying `--format`, duck-shard enters analytical query mode. This mode executes your SQL query and displays results as a formatted table in the console while also saving the results as a CSV file.
+
+**Perfect for:**
+- Data exploration and analysis
+- Quick ad-hoc queries on large datasets
+- Generating reports for stakeholders
+- Data quality checks
+
+### **Basic Analytical Queries**
+```bash
+# Analyze sales data without specifying output format
+./duck-shard.sh ./sales_data.parquet --sql ./analysis/monthly_summary.sql -o ./reports/
+
+# Results will be displayed in console AND saved as query_result.csv
+# Use --prefix/--suffix to customize the output filename
+./duck-shard.sh ./events/ --sql ./analysis/user_behavior.sql --prefix "june_" --suffix "_analysis" -o ./reports/
+# Saves as: reports/june_query_result_analysis.csv
+```
+
+### **Complex Analytics Example**
+```sql
+-- monthly_revenue_analysis.sql
+SELECT 
+  DATE_TRUNC('month', order_date) as month,
+  COUNT(*) as total_orders,
+  SUM(revenue) as total_revenue,
+  AVG(revenue) as avg_order_value,
+  COUNT(DISTINCT customer_id) as unique_customers
+FROM input_data 
+WHERE order_date >= '2024-01-01'
+GROUP BY DATE_TRUNC('month', order_date)
+ORDER BY month DESC;
+```
+
+```bash
+# Run analytical query and see results immediately
+./duck-shard.sh gs://data-lake/orders/ \
+  --sql ./analysis/monthly_revenue_analysis.sql \
+  --gcs-key YOUR_KEY --gcs-secret YOUR_SECRET \
+  -o ./reports/
+```
+
+**Analytical Mode Features:**
+- ✅ Pretty table output in console for immediate viewing
+- ✅ Automatic CSV export for further analysis
+- ✅ Works with both single files and directories
+- ✅ Supports cloud storage (GCS, S3) input and output
+- ✅ Custom filename prefix/suffix support
+- ✅ No format conversion overhead - pure analytical focus
 
 ---
 
