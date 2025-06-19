@@ -19,7 +19,7 @@ SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json"
 MAX_PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 SINGLE_FILE=false
 OUTPUT_FILENAME=""
-FORMAT="ndjson"
+FORMAT=""
 FORMAT_EXPLICITLY_SET=false
 SELECT_COLUMNS="*"
 DEDUPE=false
@@ -171,22 +171,31 @@ if [[ -n "${OUTPUT_DIR:-}" && ! "${OUTPUT_DIR}" =~ ^(gs|s3):// ]]; then
   mkdir -p "$OUTPUT_DIR"
 fi
 
-case "$FORMAT" in
-  ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
-  parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
-  csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
-  jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
-  *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
-esac
-
 # Detect analytical query mode (no --format specified but --sql is provided)
 ANALYTICAL_MODE=false
-if [[ ! $FORMAT_EXPLICITLY_SET && -n "$SQL_FILE" ]]; then
+if [[ $FORMAT_EXPLICITLY_SET == false && -n "$SQL_FILE" ]]; then
   ANALYTICAL_MODE=true
   # Set default output directory if not specified
   if [[ -z "$OUTPUT_DIR" ]]; then
     OUTPUT_DIR="."
   fi
+else
+  # Set default format if not explicitly set and not in analytical mode
+  if [[ $FORMAT_EXPLICITLY_SET == false ]]; then
+    FORMAT="ndjson"
+  fi
+fi
+
+# Set format-specific variables (skip in analytical mode)
+if ! $ANALYTICAL_MODE; then
+  case "$FORMAT" in
+    ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
+    parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
+    csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
+    jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
+    "") echo "Error: --format must be specified or use --sql without --format for analytical mode"; exit 1 ;;
+    *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
+  esac
 fi
 
 # Validation for --jq usage
@@ -276,8 +285,30 @@ run_duckdb() {
   if $VERBOSE; then
     echo -e "\n[duck-shard:VERBOSE] duckdb -c \"$final_cmd\"\n"
   fi
-  # Filter out the DuckDB success message
-  duckdb -c "$final_cmd" | grep -v "^┌─────────┐$" | grep -v "^│ Success │$" | grep -v "^│ boolean │$" | grep -v "^├─────────┤$" | grep -v "^│ true    │$" | grep -v "^└─────────┘$" || true
+  # Create a temporary file to capture stderr
+  local temp_err=$(mktemp)
+  local output exit_code
+  
+  # Execute DuckDB and capture stderr separately
+  output=$(duckdb -c "$final_cmd" 2>"$temp_err")
+  exit_code=$?
+  
+  # Read stderr content
+  local stderr_content
+  stderr_content=$(cat "$temp_err" 2>/dev/null || true)
+  rm -f "$temp_err"
+  
+  # Check for errors
+  if [ $exit_code -ne 0 ] || [[ "$stderr_content" =~ "Error:" ]] || [[ "$stderr_content" =~ "IO Error:" ]] || [[ "$stderr_content" =~ "Permission denied" ]]; then
+    echo "Error: DuckDB operation failed" >&2
+    if [[ -n "$stderr_content" ]]; then
+      echo "$stderr_content" >&2
+    fi
+    return 1
+  fi
+  
+  # Filter out the DuckDB success message from output
+  echo "$output" | grep -v "^┌─────────┐$" | grep -v "^│ Success │$" | grep -v "^│ boolean │$" | grep -v "^├─────────┤$" | grep -v "^│ true    │$" | grep -v "^└─────────┘$" || true
 }
 
 find_input_files() {
@@ -787,10 +818,12 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
 
   first_ext="${FILES[0]##*.}"
-  for f in "${FILES[@]}"; do
-    ext="${f##*.}"
-    [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
-  done
+  if $SINGLE_FILE; then
+    for f in "${FILES[@]}"; do
+      ext="${f##*.}"
+      [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
+    done
+  fi
   duckdb_func=$(get_duckdb_func "$first_ext")
 
   # Handle preview mode for directories
