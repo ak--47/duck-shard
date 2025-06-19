@@ -19,7 +19,8 @@ SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json"
 MAX_PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 SINGLE_FILE=false
 OUTPUT_FILENAME=""
-FORMAT="ndjson"
+FORMAT=""
+FORMAT_EXPLICITLY_SET=false
 SELECT_COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
@@ -38,6 +39,8 @@ RESPONSE_LOG_FILE="response-logs.json"
 HTTP_START_TIME=""
 JQ_EXPRESSION=""
 PREVIEW_ROWS=0
+FILE_PREFIX=""
+FILE_SUFFIX=""
 
 print_help() {
   cat <<EOF
@@ -67,6 +70,8 @@ Options:
   --log                                 Log HTTP responses to response-logs.json
   --jq <expression>                     Apply jq transformation to JSON output (requires json/ndjson/jsonl format)
   --preview <N>                         Preview mode: process only first N rows (default 10), don't write files
+  --prefix <prefix>                     Add prefix to output filenames
+  --suffix <suffix>                     Add suffix to output filenames (before extension)
   --verbose                             Print all DuckDB SQL commands before running them
   -h, --help                            Print this help
 
@@ -79,6 +84,8 @@ Examples:
   $0 data/ -f ndjson --jq '.user_id = (.user_id | tonumber)' -o ./out/
   $0 data/ --preview 5 -f csv
   $0 data/ -f ndjson --jq 'select(.event == "click")' --url https://api.example.com/data
+  $0 data/ -f csv --prefix "processed_" --suffix "_clean" -o ./out/
+  $0 data/ --sql analysis.sql -o ./results/  # Analytical query mode (no --format)
 
 
 EOF
@@ -90,7 +97,7 @@ while [[ $# -gt 0 ]]; do
     -s|--single-file) SINGLE_FILE=true; shift
       if [[ $# -gt 0 && ! $1 =~ ^- ]]; then OUTPUT_FILENAME="$1"; shift; fi ;;
     -f|--format) [[ $# -ge 2 ]] || { echo "Error: --format needs an argument"; exit 1; }
-      FORMAT="$2"; shift 2 ;;
+      FORMAT="$2"; FORMAT_EXPLICITLY_SET=true; shift 2 ;;
     -c|--cols) [[ $# -ge 2 ]] || { echo "Error: --cols needs an argument"; exit 1; }
       SELECT_COLUMNS="$(echo "$2" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       SELECT_COLUMNS="$(echo "$SELECT_COLUMNS" | paste -sd, -)"
@@ -122,6 +129,10 @@ while [[ $# -gt 0 ]]; do
       JQ_EXPRESSION="$2"; shift 2 ;;
     --preview) PREVIEW_ROWS=10; shift
       if [[ $# -gt 0 && $1 =~ ^[0-9]+$ ]]; then PREVIEW_ROWS="$1"; shift; fi ;;
+    --prefix) [[ $# -ge 2 ]] || { echo "Error: --prefix needs an argument"; exit 1; }
+      FILE_PREFIX="$2"; shift 2 ;;
+    --suffix) [[ $# -ge 2 ]] || { echo "Error: --suffix needs an argument"; exit 1; }
+      FILE_SUFFIX="$2"; shift 2 ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -160,16 +171,38 @@ if [[ -n "${OUTPUT_DIR:-}" && ! "${OUTPUT_DIR}" =~ ^(gs|s3):// ]]; then
   mkdir -p "$OUTPUT_DIR"
 fi
 
-case "$FORMAT" in
-  ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
-  parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
-  csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
-  jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
-  *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
-esac
+# Detect analytical query mode (no --format specified but --sql is provided)
+ANALYTICAL_MODE=false
+if [[ $FORMAT_EXPLICITLY_SET == false && -n "$SQL_FILE" ]]; then
+  ANALYTICAL_MODE=true
+  # Set default output directory if not specified
+  if [[ -z "$OUTPUT_DIR" ]]; then
+    OUTPUT_DIR="."
+  fi
+else
+  # Set default format if not explicitly set and not in analytical mode
+  if [[ $FORMAT_EXPLICITLY_SET == false ]]; then
+    FORMAT="ndjson"
+  fi
+fi
+
+# Set format-specific variables (skip in analytical mode)
+if ! $ANALYTICAL_MODE; then
+  case "$FORMAT" in
+    ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
+    parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
+    csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
+    jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
+    "") echo "Error: --format must be specified or use --sql without --format for analytical mode"; exit 1 ;;
+    *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
+  esac
+fi
 
 # Validation for --jq usage
 if [[ -n "$JQ_EXPRESSION" ]]; then
+  if $ANALYTICAL_MODE; then
+    echo "Error: --jq cannot be used in analytical query mode (when --format is not specified)" >&2; exit 1
+  fi
   case "$FORMAT" in
     ndjson|jsonl|json) ;;
     *) echo "Error: --jq can only be used with JSON output formats (ndjson, json, jsonl)" >&2; exit 1 ;;
@@ -195,10 +228,26 @@ if (( ROWS_PER_FILE > 0 )) && $SINGLE_FILE; then
   echo "Error: --rows cannot be used with --single-file mode"; exit 1
 fi
 
+# Validation for analytical mode
+if $ANALYTICAL_MODE; then
+  if [[ -n "$POST_URL" ]]; then
+    echo "Error: --url cannot be used in analytical query mode" >&2; exit 1
+  fi
+  if $SINGLE_FILE; then
+    echo "Error: --single-file cannot be used in analytical query mode" >&2; exit 1
+  fi
+  if (( ROWS_PER_FILE > 0 )); then
+    echo "Error: --rows cannot be used in analytical query mode" >&2; exit 1
+  fi
+fi
+
 # Validation for --preview usage
 if (( PREVIEW_ROWS > 0 )); then
   if [[ -n "$POST_URL" ]]; then
     echo "Error: --preview cannot be used with --url (preview mode doesn't POST data)" >&2; exit 1
+  fi
+  if $ANALYTICAL_MODE; then
+    echo "Error: --preview cannot be used in analytical query mode" >&2; exit 1
   fi
   if [[ -n "${OUTPUT_DIR:-}" || -n "${OUTPUT_FILENAME:-}" ]]; then
     echo "Warning: --preview mode specified - no files will be written to disk" >&2
@@ -236,7 +285,30 @@ run_duckdb() {
   if $VERBOSE; then
     echo -e "\n[duck-shard:VERBOSE] duckdb -c \"$final_cmd\"\n"
   fi
-  duckdb -c "$final_cmd"
+  # Create a temporary file to capture stderr
+  local temp_err=$(mktemp)
+  local output exit_code
+  
+  # Execute DuckDB and capture stderr separately
+  output=$(duckdb -c "$final_cmd" 2>"$temp_err")
+  exit_code=$?
+  
+  # Read stderr content
+  local stderr_content
+  stderr_content=$(cat "$temp_err" 2>/dev/null || true)
+  rm -f "$temp_err"
+  
+  # Check for errors
+  if [ $exit_code -ne 0 ] || [[ "$stderr_content" =~ "Error:" ]] || [[ "$stderr_content" =~ "IO Error:" ]] || [[ "$stderr_content" =~ "Permission denied" ]]; then
+    echo "Error: DuckDB operation failed" >&2
+    if [[ -n "$stderr_content" ]]; then
+      echo "$stderr_content" >&2
+    fi
+    return 1
+  fi
+  
+  # Filter out the DuckDB success message from output
+  echo "$output" | grep -v "^┌─────────┐$" | grep -v "^│ Success │$" | grep -v "^│ boolean │$" | grep -v "^├─────────┤$" | grep -v "^│ true    │$" | grep -v "^└─────────┘$" || true
 }
 
 find_input_files() {
@@ -278,6 +350,23 @@ output_base_name() {
   local base="$(basename "$file")"
   local outbase="${base%.*}"
   echo "$outbase"
+}
+
+build_output_filename() {
+  local base_name="$1"
+  local extension="$2"
+  local filename="${FILE_PREFIX}${base_name}${FILE_SUFFIX}.${extension}"
+  echo "$filename"
+}
+
+fix_glob_name() {
+  local name="$1"
+  # Replace asterisks and other problematic glob characters with safe alternatives
+  name="${name//\*/merged}"
+  name="${name//\?/unknown}"
+  name="${name//\[/}"
+  name="${name//\]/}"
+  echo "$name"
 }
 
 get_sql_stmt() {
@@ -570,10 +659,11 @@ split_convert_file() {
   local i=1; local offset=0
   while (( offset < row_count )); do
     local out
+    local filename=$(build_output_filename "$outbase-$i" "$EXT")
     if [[ -n "${OUTPUT_DIR:-}" ]]; then
-      out="${OUTPUT_DIR%/}/$outbase-$i.$EXT"
+      out="${OUTPUT_DIR%/}/$filename"
     else
-      out="$(dirname "$infile")/$outbase-$i.$EXT"
+      out="$(dirname "$infile")/$filename"
     fi
 
     # Safety check to prevent overwriting source file
@@ -622,10 +712,11 @@ convert_file() {
   local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
   local outbase; outbase="$(output_base_name "$infile")"
   local out
+  local filename=$(build_output_filename "$outbase" "$EXT")
   if [[ -n "${OUTPUT_DIR:-}" ]]; then
-    out="${OUTPUT_DIR%/}/$outbase.$EXT"
+    out="${OUTPUT_DIR%/}/$filename"
   else
-    out="$(dirname "$infile")/$outbase.$EXT"
+    out="$(dirname "$infile")/$filename"
   fi
 
   # Safety check to prevent overwriting source file
@@ -658,11 +749,68 @@ convert_file() {
   fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file build_output_filename fix_glob_name
 
 load_cloud_creds
 
-echo -e "\n🦆  DUCK SHARD JOB START\n\n🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}  jq=${JQ_EXPRESSION:-}  preview=${PREVIEW_ROWS:-0}\n"
+if $ANALYTICAL_MODE; then
+  echo -e "\n🦆  DUCK SHARD ANALYTICAL QUERY\n📊 sql_file=$SQL_FILE  output_dir=${OUTPUT_DIR}  prefix=${FILE_PREFIX:-}  suffix=${FILE_SUFFIX:-}\n"
+else
+  echo -e "\n🦆  DUCK SHARD JOB START\n🚀 format=$FORMAT  cols=${SELECT_COLUMNS:-*}  parallel=$MAX_PARALLEL_JOBS  single_file=$SINGLE_FILE  dedupe=$DEDUPE  output_dir=${OUTPUT_DIR:-<src dir>}  rows_per_file=${ROWS_PER_FILE:-0}  sql_file=${SQL_FILE:-}  jq=${JQ_EXPRESSION:-}  preview=${PREVIEW_ROWS:-0}  prefix=${FILE_PREFIX:-}  suffix=${FILE_SUFFIX:-}\n"
+fi
+
+# Handle analytical query mode
+if $ANALYTICAL_MODE; then
+  echo "🔍 Running analytical query on data..."
+  
+  # Determine input files
+  if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+    FILES=()
+    while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(find_input_files "$INPUT_PATH")
+    [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
+    
+    # Use the first file's extension to determine the duckdb function
+    first_ext="${FILES[0]##*.}"
+    duckdb_func=$(get_duckdb_func "$first_ext")
+    SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
+    VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func(ARRAY[$SQL_PATHS]);"
+  else
+    ext="${INPUT_PATH##*.}"
+    duckdb_func=$(get_duckdb_func "$ext")
+    VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$INPUT_PATH');"
+  fi
+  
+  # Get the SQL query
+  sql_stmt=$(get_sql_stmt "$SQL_FILE")
+  
+  # Execute query and display results
+  echo "📊 Executing query and displaying results..."
+  query_output=$(run_duckdb "$VIEW_CREATION SELECT * FROM ( $sql_stmt );")
+  
+  # Display results as a nice table in console
+  echo "$query_output"
+  
+  # Save results to CSV file
+  output_filename="query_result.csv"
+  if [[ -n "$FILE_PREFIX" || -n "$FILE_SUFFIX" ]]; then
+    output_filename=$(build_output_filename "query_result" "csv")
+  fi
+  
+  output_path="$OUTPUT_DIR/$output_filename"
+  
+  # Ensure output directory exists for local paths
+  if [[ ! "$OUTPUT_DIR" =~ ^(gs|s3):// ]]; then
+    mkdir -p "$OUTPUT_DIR"
+  fi
+  
+  echo "💾 Saving results to $output_path..."
+  run_duckdb "$VIEW_CREATION COPY ( $sql_stmt ) TO '$output_path' (FORMAT CSV, HEADER);" > /dev/null
+  
+  echo -e "\n✅ Analytical query complete!"
+  echo "📊 Results displayed above and saved to: $output_path"
+  echo -e "\n🦆DUCK SHARD ANALYSIS 💯 DONE\n"
+  exit 0
+fi
 
 if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   FILES=()
@@ -670,10 +818,12 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
 
   first_ext="${FILES[0]##*.}"
-  for f in "${FILES[@]}"; do
-    ext="${f##*.}"
-    [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
-  done
+  if $SINGLE_FILE; then
+    for f in "${FILES[@]}"; do
+      ext="${f##*.}"
+      [[ "$ext" == "$first_ext" ]] || { echo "Error: All files must have the same extension for --single-file"; exit 1; }
+    done
+  fi
   duckdb_func=$(get_duckdb_func "$first_ext")
 
   # Handle preview mode for directories
@@ -701,14 +851,18 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
 
     if [[ -z "${OUTPUT_FILENAME:-}" ]]; then
       if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
-        OUTPUT_FILENAME="${default_output_dir%/}/$(basename "${INPUT_PATH%/}")_merged.$EXT"
+        base_name="$(basename "${INPUT_PATH%/}")"
+        base_name=$(fix_glob_name "$base_name")
+        merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        OUTPUT_FILENAME="${default_output_dir%/}/$merged_filename"
       else
         base_name="$(basename "$INPUT_PATH")"
         # Handle files without extensions or with multiple dots properly
         if [[ "$base_name" == *.* ]]; then
           base_name="${base_name%.*}"
         fi
-        OUTPUT_FILENAME="${default_output_dir%/}/${base_name}_merged.$EXT"
+        merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        OUTPUT_FILENAME="${default_output_dir%/}/$merged_filename"
       fi
     elif [[ "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then
       # Apply the default output directory when filename is relative
@@ -744,7 +898,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"
