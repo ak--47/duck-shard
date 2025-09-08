@@ -73,6 +73,7 @@ Options:
   --prefix <prefix>                     Add prefix to output filenames
   --suffix <suffix>                     Add suffix to output filenames (before extension)
   --verbose                             Print all DuckDB SQL commands before running them
+  --ui                                  Start web interface server (requires Node.js)
   -h, --help                            Print this help
 
 Examples:
@@ -86,6 +87,7 @@ Examples:
   $0 data/ -f ndjson --jq 'select(.event == "click")' --url https://api.example.com/data
   $0 data/ -f csv --prefix "processed_" --suffix "_clean" -o ./out/
   $0 data/ --sql analysis.sql -o ./results/  # Analytical query mode (no --format)
+  $0 --ui  # Start web interface at http://localhost:8080
 
 
 EOF
@@ -134,6 +136,21 @@ while [[ $# -gt 0 ]]; do
     --suffix) [[ $# -ge 2 ]] || { echo "Error: --suffix needs an argument"; exit 1; }
       FILE_SUFFIX="$2"; shift 2 ;;
     --verbose) VERBOSE=true; shift ;;
+    --ui) 
+      echo "🦆 Starting Duck Shard Web Interface..."
+      command -v node >/dev/null 2>&1 || {
+        echo "Error: Node.js not installed. Please install Node.js to use the web interface." >&2
+        exit 1
+      }
+      cd "$(dirname "$0")"
+      echo "Installing dependencies..."
+      npm install --silent || {
+        echo "Error: Failed to install Node.js dependencies." >&2
+        exit 1
+      }
+      echo "Starting server..."
+      exec node server.mjs
+      ;;
     -h|--help) print_help; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac

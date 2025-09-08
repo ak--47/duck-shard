@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport"
+		content="width=device-width, initial-scale=1.0">
+	<title>🦆 Duck Shard - Universal Data Pipeline</title>
+	<link rel="stylesheet"
+		href="style.css">
+	<!-- Dropzone -->
+	<link rel="stylesheet"
+		href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" />
+	<script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
+</head>
+
+<body>
+	<div class="container">
+		<!-- Header -->
+		<header class="header">
+			<h1 class="logo">
+				<span class="logo-icon">🦆</span>
+				<span id="brand-name">Duck Shard</span>
+				<span id="brand-description">Universal Data Pipeline</span>
+			</h1>
+			<p class="subtitle">Convert, transform, and stream data with zero DevOps overhead</p>
+			<button type="button" id="dev-key-btn" class="dev-key-btn" title="Fill form with example values">🔑</button>
+		</header>
+
+		<!-- Main Form -->
+		<form id="duckShardForm"
+			class="duck-shard-form">
+			
+			<!-- Input Data Section -->
+			<section class="card">
+				<h2 class="section-title">📁 Input Data</h2>
+				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, and JSON formats from local files or cloud storage.</p>
+
+				<!-- Input Source Toggle -->
+				<div class="input-source-toggle">
+					<label class="toggle-label">
+						<input type="radio"
+							name="inputSource"
+							value="local"
+							checked>
+						💻 Local Files/Folders
+					</label>
+					<label class="toggle-label">
+						<input type="radio"
+							name="inputSource"
+							value="gcs">
+						☁️ Google Cloud Storage
+					</label>
+					<label class="toggle-label">
+						<input type="radio"
+							name="inputSource"
+							value="s3">
+						☁️ Amazon S3
+					</label>
+				</div>
+
+				<!-- Local File/Folder Input -->
+				<div id="local-input"
+					class="input-section">
+					<div class="form-group">
+						<label for="localPath">Local Path</label>
+						<input type="text"
+							id="localPath"
+							name="localPath"
+							placeholder="./data/ or ./file.parquet"
+							autocomplete="off">
+						<small>Path to a file or directory containing your data</small>
+					</div>
+				</div>
+
+				<!-- GCS Input -->
+				<div id="gcs-input"
+					class="input-section"
+					style="display: none;">
+					<div class="form-group">
+						<label for="gcsPath">Google Cloud Storage Path</label>
+						<input type="text"
+							id="gcsPath"
+							name="gcsPath"
+							placeholder="gs://your-bucket/path/to/data/"
+							autocomplete="off">
+						<small>GCS path to your data (bucket/folder or specific file)</small>
+					</div>
+				</div>
+
+				<!-- S3 Input -->
+				<div id="s3-input"
+					class="input-section"
+					style="display: none;">
+					<div class="form-group">
+						<label for="s3Path">Amazon S3 Path</label>
+						<input type="text"
+							id="s3Path"
+							name="s3Path"
+							placeholder="s3://your-bucket/path/to/data/"
+							autocomplete="off">
+						<small>S3 path to your data (bucket/folder or specific file)</small>
+					</div>
+				</div>
+
+				<!-- Preview Data Section -->
+				<div class="preview-actions" style="margin-top: 20px; text-align: center;">
+					<button type="button" id="preview-data-btn" class="btn btn-ghost">
+						<span class="btn-icon">👁️</span>
+						Preview Data
+					</button>
+				</div>
+
+				<!-- Data Preview Display -->
+				<div id="data-preview" class="preview-section collapsible-section" style="display: none; margin-top: 20px;">
+					<div class="section-header" onclick="toggleSection('preview-content-wrapper')">
+						<span class="section-icon">👁️</span>
+						<h3>Data Preview</h3>
+						<span class="toggle-icon">▲</span>
+					</div>
+					<div id="preview-content-wrapper" class="collapsible-content">
+						<p class="section-description">Sample of your input data before any transformations.</p>
+						<div id="preview-content" class="results-data"></div>
+					</div>
+				</div>
+			</section>
+
+			<!-- Output Configuration Section -->
+			<section class="card">
+				<h2 class="section-title">📤 Output Configuration</h2>
+				<p class="section-description">Configure how you want your processed data delivered.</p>
+
+				<!-- Output Mode Toggle -->
+				<div class="output-mode-toggle">
+					<label class="toggle-label">
+						<input type="radio"
+							name="outputMode"
+							value="file"
+							checked>
+						💾 Save to Files
+					</label>
+					<label class="toggle-label">
+						<input type="radio"
+							name="outputMode"
+							value="api">
+						🚀 Stream to API
+					</label>
+					<label class="toggle-label">
+						<input type="radio"
+							name="outputMode"
+							value="preview">
+						👁️ Preview Only
+					</label>
+				</div>
+
+				<!-- File Output Options -->
+				<div id="file-output" class="output-section">
+					<div class="form-row">
+						<div class="form-group">
+							<label for="outputFormat">Output Format</label>
+							<select id="outputFormat" name="outputFormat">
+								<option value="ndjson">NDJSON (recommended)</option>
+								<option value="csv">CSV</option>
+								<option value="parquet">Parquet</option>
+							</select>
+							<small>Format for output files</small>
+						</div>
+						<div class="form-group">
+							<label for="outputPath">Output Directory</label>
+							<input type="text"
+								id="outputPath"
+								name="outputPath"
+								placeholder="./output/ or gs://bucket/output/"
+								autocomplete="off">
+							<small>Where to save processed files (local or cloud)</small>
+						</div>
+					</div>
+
+					<div class="form-row">
+						<div class="form-group">
+							<label for="rowsPerFile">Rows per File</label>
+							<input type="number"
+								id="rowsPerFile"
+								name="rowsPerFile"
+								placeholder="1000"
+								min="1"
+								autocomplete="off">
+							<small>Split into multiple files with N rows each (optional)</small>
+						</div>
+						<div class="form-group checkbox-group">
+							<label class="checkbox-label">
+								<input type="checkbox"
+									id="singleFile"
+									name="singleFile">
+								Merge into Single File
+							</label>
+							<small>Combine all output into one file</small>
+						</div>
+					</div>
+				</div>
+
+				<!-- API Output Options -->
+				<div id="api-output" class="output-section" style="display: none;">
+					<div class="form-group">
+						<label for="apiUrl">API Endpoint URL</label>
+						<input type="url"
+							id="apiUrl"
+							name="apiUrl"
+							placeholder="https://api.example.com/webhook"
+							autocomplete="off">
+						<small>HTTP endpoint to POST processed data</small>
+					</div>
+
+					<div class="api-headers">
+						<label>HTTP Headers</label>
+						<div id="headers-container">
+							<div class="header-row">
+								<input type="text" placeholder="Header name" class="header-name">
+								<input type="text" placeholder="Header value" class="header-value">
+								<button type="button" class="remove-header-btn">✕</button>
+							</div>
+						</div>
+						<button type="button" id="add-header-btn" class="btn btn-ghost btn-sm">
+							<span class="btn-icon">➕</span>
+							Add Header
+						</button>
+						<small>Authentication headers, content-type, etc.</small>
+					</div>
+
+					<div class="form-row">
+						<div class="form-group">
+							<label for="batchSize">Batch Size</label>
+							<input type="number"
+								id="batchSize"
+								name="batchSize"
+								value="1000"
+								min="1"
+								max="10000"
+								autocomplete="off">
+							<small>Records per API request</small>
+						</div>
+						<div class="form-group checkbox-group">
+							<label class="checkbox-label">
+								<input type="checkbox"
+									id="logResponses"
+									name="logResponses">
+								Log API Responses
+							</label>
+							<small>Save responses to response-logs.json</small>
+						</div>
+					</div>
+				</div>
+
+				<!-- Preview Options -->
+				<div id="preview-output" class="output-section" style="display: none;">
+					<div class="form-group">
+						<label for="previewRows">Preview Rows</label>
+						<input type="number"
+							id="previewRows"
+							name="previewRows"
+							value="10"
+							min="1"
+							max="100"
+							autocomplete="off">
+						<small>Number of rows to preview (no files written)</small>
+					</div>
+				</div>
+			</section>
+
+			<!-- Cloud Storage Credentials Section -->
+			<section class="card"
+				id="cloud-credentials-section"
+				style="display: none;">
+				<h2 class="section-title">🔑 Cloud Storage Credentials</h2>
+				<p class="section-description">Authentication credentials for cloud storage access.</p>
+
+				<!-- GCS Credentials -->
+				<div class="gcs-credentials"
+					id="gcs-credentials"
+					style="display: none;">
+					<div class="form-row">
+						<div class="form-group">
+							<label for="gcsKey">GCS HMAC Key</label>
+							<input type="text"
+								id="gcsKey"
+								name="gcsKey"
+								placeholder="Your GCS HMAC access key"
+								autocomplete="off">
+						</div>
+						<div class="form-group">
+							<label for="gcsSecret">GCS HMAC Secret</label>
+							<input type="password"
+								id="gcsSecret"
+								name="gcsSecret"
+								placeholder="Your GCS HMAC secret key">
+						</div>
+					</div>
+				</div>
+
+				<!-- S3 Credentials -->
+				<div class="s3-credentials"
+					id="s3-credentials"
+					style="display: none;">
+					<div class="form-row">
+						<div class="form-group">
+							<label for="s3Key">S3 Access Key</label>
+							<input type="text"
+								id="s3Key"
+								name="s3Key"
+								placeholder="Your AWS access key ID"
+								autocomplete="off">
+						</div>
+						<div class="form-group">
+							<label for="s3Secret">S3 Secret Key</label>
+							<input type="password"
+								id="s3Secret"
+								name="s3Secret"
+								placeholder="Your AWS secret access key">
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<!-- Processing Options -->
+			<section class="card">
+				<div class="section-header" onclick="toggleSection('processing-content')">
+					<h2 class="section-title">⚙️ Processing Options</h2>
+					<span class="toggle-icon">▼</span>
+				</div>
+				<div id="processing-content" class="collapsible-content" style="display: none;">
+					<p class="section-description">Advanced data processing and transformation options.</p>
+
+				<!-- Performance Settings -->
+				<div class="collapsible-section">
+					<div class="section-header"
+						onclick="toggleSection('performance-section')">
+						<span class="section-icon">🚀</span>
+						<h3>Performance & Parallelism</h3>
+						<span class="toggle-icon">▼</span>
+					</div>
+					<div id="performance-section"
+						class="collapsible-content"
+						style="display: none;">
+						<div class="form-row">
+							<div class="form-group">
+								<label for="maxParallelJobs">Max Parallel Jobs</label>
+								<input type="number"
+									id="maxParallelJobs"
+									name="maxParallelJobs"
+									placeholder="4"
+									min="1"
+									max="16"
+									autocomplete="off">
+								<small>Number of parallel processing jobs (default: auto-detect)</small>
+							</div>
+							<div class="form-group checkbox-group">
+								<label class="checkbox-label">
+									<input type="checkbox"
+										id="verbose"
+										name="verbose">
+									Verbose Output
+								</label>
+								<small>Show detailed processing information</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Data Transformation -->
+				<div class="collapsible-section">
+					<div class="section-header"
+						onclick="toggleSection('transform-section')">
+						<span class="section-icon">🔄</span>
+						<h3>Data Transformation</h3>
+						<span class="toggle-icon">▼</span>
+					</div>
+					<div id="transform-section"
+						class="collapsible-content"
+						style="display: none;">
+						
+						<div class="form-group">
+							<label for="sqlFile">SQL Transformation File</label>
+							<input type="text"
+								id="sqlFile"
+								name="sqlFile"
+								placeholder="./transform.sql"
+								autocomplete="off">
+							<small>Path to SQL file for custom transformations</small>
+						</div>
+
+						<div class="form-group">
+							<label for="jqExpression">jq Transformation</label>
+							<input type="text"
+								id="jqExpression"
+								name="jqExpression"
+								placeholder='select(.event == "purchase") | {user: .user_id, amount: .revenue}'
+								autocomplete="off">
+							<small>jq expression for JSON transformations</small>
+						</div>
+
+						<div class="form-row">
+							<div class="form-group">
+								<label for="selectColumns">Select Columns</label>
+								<input type="text"
+									id="selectColumns"
+									name="selectColumns"
+									placeholder="col1,col2,col3"
+									autocomplete="off">
+								<small>Comma-separated list of columns to include</small>
+							</div>
+							<div class="form-group checkbox-group">
+								<label class="checkbox-label">
+									<input type="checkbox"
+										id="dedupe"
+										name="dedupe">
+									Remove Duplicates
+								</label>
+								<small>Remove duplicate rows</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- File Organization -->
+				<div class="collapsible-section">
+					<div class="section-header"
+						onclick="toggleSection('organization-section')">
+						<span class="section-icon">📂</span>
+						<h3>File Organization</h3>
+						<span class="toggle-icon">▼</span>
+					</div>
+					<div id="organization-section"
+						class="collapsible-content"
+						style="display: none;">
+						<div class="form-row">
+							<div class="form-group">
+								<label for="prefix">Filename Prefix</label>
+								<input type="text"
+									id="prefix"
+									name="prefix"
+									placeholder="processed_"
+									autocomplete="off">
+								<small>Text to add before filenames</small>
+							</div>
+							<div class="form-group">
+								<label for="suffix">Filename Suffix</label>
+								<input type="text"
+									id="suffix"
+									name="suffix"
+									placeholder="_clean"
+									autocomplete="off">
+								<small>Text to add after filenames (before extension)</small>
+							</div>
+						</div>
+					</div>
+				</div>
+				</div>
+			</section>
+
+			<!-- CLI Command Preview -->
+			<section class="card">
+				<h2 class="section-title">💻 CLI Command</h2>
+				<p class="section-description">Copy this command to run the same processing from your terminal.</p>
+
+				<div class="cli-preview">
+					<div class="cli-header">
+						<span class="cli-label">Terminal Command:</span>
+						<button type="button"
+							id="copy-cli"
+							class="btn btn-ghost btn-sm">
+							<span class="btn-icon">📋</span>
+							Copy
+						</button>
+					</div>
+					<pre id="cli-command" class="cli-command empty">Configure your options above to generate CLI command...</pre>
+				</div>
+			</section>
+
+			<!-- Actions -->
+			<section class="actions">
+				<button type="button"
+					id="test-run-btn"
+					class="btn btn-secondary">
+					<span class="btn-icon">🧪</span>
+					Test Run
+				</button>
+				<button type="submit"
+					id="run-btn"
+					class="btn btn-primary">
+					<span class="btn-icon">🚀</span>
+					Run Processing
+				</button>
+			</section>
+
+			<!-- Loading State -->
+			<div id="loading"
+				class="loading-overlay"
+				style="display: none;">
+				<div class="loading-content">
+					<div class="loading-spinner"></div>
+					<h3 id="loading-title">Processing...</h3>
+					<p id="loading-message">Processing your data with duck-shard. This may take a moment...</p>
+					<div class="loading-details"></div>
+				</div>
+			</div>
+
+			<!-- Results -->
+			<div id="results"
+				class="results-section"
+				style="display: none;">
+				<div class="results-content">
+					<h3 id="results-title">Processing Complete!</h3>
+					<div id="results-data"
+						class="results-data"></div>
+				</div>
+			</div>
+		</form>
+	</div>
+
+	<script src="script.js"></script>
+</body>
+
+</html>

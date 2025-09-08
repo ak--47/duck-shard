@@ -11,3 +11,4 @@ duckdb_init.sql
 .claude
 tests/response-logs.json
 todos.txt
+node_modules

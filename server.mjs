@@ -2,6 +2,8 @@ import express from 'express';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { WebSocketServer } from 'ws';
+import { createServer } from 'http';
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +28,13 @@ if (missingVars.length > 0) {
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Create HTTP server and WebSocket server
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
+// Store active WebSocket connections by job ID
+const jobConnections = new Map();
+
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
@@ -34,6 +43,62 @@ app.use((req, res, next) => {
     console.log(`[${req.id}] ${req.method} ${req.path}`);
     next();
 });
+
+// Serve static files from ./ui/ directory
+app.use(express.static(path.join(__dirname, 'ui')));
+
+// WebSocket connection handling
+wss.on('connection', (ws) => {
+    console.log('WebSocket connection established');
+    
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            
+            if (data.type === 'register-job' && data.jobId) {
+                // Register this WebSocket for the job
+                if (!jobConnections.has(data.jobId)) {
+                    jobConnections.set(data.jobId, new Set());
+                }
+                jobConnections.get(data.jobId).add(ws);
+                
+                // Send confirmation
+                ws.send(JSON.stringify({
+                    type: 'job-registered',
+                    jobId: data.jobId
+                }));
+                
+                console.log(`WebSocket registered for job ${data.jobId}`);
+            }
+        } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+        }
+    });
+    
+    ws.on('close', () => {
+        // Remove this WebSocket from all job connections
+        for (const [jobId, connections] of jobConnections.entries()) {
+            connections.delete(ws);
+            if (connections.size === 0) {
+                jobConnections.delete(jobId);
+            }
+        }
+        console.log('WebSocket connection closed');
+    });
+});
+
+// Function to broadcast to all connections for a job
+function broadcastToJob(jobId, message) {
+    const connections = jobConnections.get(jobId);
+    if (connections) {
+        const messageStr = JSON.stringify({ ...message, jobId });
+        connections.forEach(ws => {
+            if (ws.readyState === ws.OPEN) {
+                ws.send(messageStr);
+            }
+        });
+    }
+}
 
 // Set timeouts for Cloud Run
 const CLOUD_RUN_TIMEOUT = 850; // seconds (Cloud Run max is 900, leave some buffer)
@@ -45,7 +110,7 @@ function buildArgs(params) {
     args.push(params.input_path);
     if (params.max_parallel_jobs) args.push(String(params.max_parallel_jobs));
     if (params.format)        args.push('--format', params.format);
-    if (params.single_file)   args.push('--single-file', params.single_file);
+    if (params.single_file)   args.push('--single-file', typeof params.single_file === 'string' ? params.single_file : '');
     if (params.cols)          args.push('--cols', params.cols);
     if (params.dedupe)        args.push('--dedupe');
     if (params.output)        args.push('--output', params.output);
@@ -64,6 +129,8 @@ function buildArgs(params) {
     if (params.jq)            args.push('--jq', params.jq);
     if (params.preview)       args.push('--preview', String(params.preview));
     if (params.verbose)       args.push('--verbose');
+    if (params.prefix)        args.push('--prefix', params.prefix);
+    if (params.suffix)        args.push('--suffix', params.suffix);
     return args;
 }
 
@@ -78,7 +145,8 @@ app.post('/run', async (req, res) => {
         console.error(`[${req.id}] Invalid arguments:`, e.message);
         return res.status(400).json({ 
             error: e.message,
-            request_id: req.id 
+            request_id: req.id,
+            status: 'error'
         });
     }
 
@@ -118,6 +186,40 @@ app.post('/run', async (req, res) => {
     proc.stdout.on('data', data => { 
         const output = data.toString();
         logs += output;
+        
+        // Try to extract progress information for WebSocket updates
+        try {
+            // Look for progress indicators in the output
+            const lines = output.split('\n');
+            for (const line of lines) {
+                // Look for patterns like "Posted part-1-1.ndjson (HTTP 200) | 15.2 req/s, 15,200 rec/s"
+                const progressMatch = line.match(/Posted.*?\|\s*([\d.]+)\s*req\/s,\s*([\d,]+)\s*rec\/s/);
+                if (progressMatch) {
+                    broadcastToJob(req.id, {
+                        type: 'progress',
+                        data: {
+                            requests: progressMatch[1],
+                            throughput: progressMatch[2],
+                            processed: progressMatch[2]
+                        }
+                    });
+                }
+                
+                // Look for other progress patterns
+                const recordMatch = line.match(/(\d+)\s+records?\s+processed/i);
+                if (recordMatch) {
+                    broadcastToJob(req.id, {
+                        type: 'progress',
+                        data: {
+                            processed: parseInt(recordMatch[1])
+                        }
+                    });
+                }
+            }
+        } catch (progressError) {
+            // Ignore progress parsing errors
+        }
+        
         // Stream large outputs to prevent memory issues
         if (logs.length > 1000000) { // 1MB
             console.log(`[${req.id}] Large output detected, truncating logs`);
@@ -161,6 +263,19 @@ app.post('/run', async (req, res) => {
                 duration,
                 timestamp: new Date().toISOString()
             };
+            
+            // Send WebSocket completion message
+            if (code === 0) {
+                broadcastToJob(req.id, {
+                    type: 'job-complete',
+                    result: response
+                });
+            } else {
+                broadcastToJob(req.id, {
+                    type: 'job-error',
+                    error: errorLogs || 'Process failed with unknown error'
+                });
+            }
             
             res.json(response);
         }
@@ -208,8 +323,10 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-app.listen(port, '0.0.0.0', () => {
+server.listen(port, '0.0.0.0', () => {
     console.log(`🦆 Duck Shard API running on port ${port}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Health check: http://localhost:${port}/health`);
+    console.log(`Web UI: http://localhost:${port}/`);
+    console.log(`WebSocket support enabled for real-time progress`);
 });
