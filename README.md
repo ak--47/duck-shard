@@ -66,8 +66,11 @@ Open http://localhost:8080 for a visual interface with real-time progress bars a
 # Select specific columns (use single quotes for $ names)
 ./duck-shard.sh data.json -f csv --cols 'user_id,$email,timestamp' -o ./clean/
 
-# SQL transformation
+# SQL transformation (ETL mode)
 ./duck-shard.sh events.parquet --sql ./transform.sql -f ndjson -o ./processed/
+
+# Analytical mode (no --format = display results + save CSV)  
+./duck-shard.sh sales.parquet --sql ./monthly_analysis.sql -o ./reports/
 
 # Stream to API with batching
 ./duck-shard.sh data/ --url https://api.example.com/ingest \
@@ -87,6 +90,40 @@ Open http://localhost:8080 for a visual interface with real-time progress bars a
 # Single file output with custom name
 ./duck-shard.sh data/ --single-file -o ./merged-data.ndjson
 ```
+
+---
+
+## SQL Files & Analytical Mode
+
+duck-shard has two SQL modes depending on whether you specify `--format`:
+
+**ETL Mode** (with `--format`): Transform data and output in specified format
+```bash
+./duck-shard.sh data.parquet --sql ./transform.sql -f ndjson -o ./processed/
+```
+
+**Analytical Mode** (no `--format`): Display results in terminal + save as CSV
+```bash
+./duck-shard.sh data.parquet --sql ./analysis.sql -o ./reports/
+# Shows formatted table in terminal AND saves query_result.csv
+```
+
+Your SQL files get an `input_data` view automatically:
+
+```sql
+-- monthly_analysis.sql
+SELECT 
+  DATE_TRUNC('month', created_at) as month,
+  COUNT(*) as orders,
+  SUM(revenue) as total_revenue,
+  AVG(revenue) as avg_order_value
+FROM input_data 
+WHERE created_at >= '2024-01-01'
+GROUP BY DATE_TRUNC('month', created_at)
+ORDER BY month;
+```
+
+Works with any file format - duck-shard handles the loading, you write the analysis.
 
 ---
 
