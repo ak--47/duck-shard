@@ -1,49 +1,59 @@
-# 🦆 duck-shard 
+# 🦆 duck-shard
 
-**Universal data pipeline:** Convert, transform, and stream data with zero DevOps overhead.
+## 🤨 wat ?
 
-Convert **Parquet**, **CSV**, **NDJSON** ↔ Stream to **HTTP APIs** ↔ Apply **SQL/jq transforms**
+duck-shard brings together three of my favorite high-performance tools: **DuckDB**, **jq**, and **curl**. Pipe them together and you get insane local performance even on modest hardware.
 
-Cross-platform. No Python, no JVM, no drama.
+The idea is simple: instead of spinning up clusters or dealing with JVM heap tuning, just use the right tool for each job. DuckDB handles the heavy SQL lifting, jq transforms JSON like magic, and curl moves data to APIs. All running in parallel on your machine.
+
+No Python environments. No Spark clusters. No Docker containers. Just fast, reliable data processing that fits in a single shell script.
+
+## 👔 tldr;
+
+Convert massive datasets between formats, apply SQL/jq transforms, stream to APIs. Built on DuckDB + bash + curl. Has a web UI. Stupid fast.
+
+```bash
+# Get it
+curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
+
+# Use it
+./duck-shard.sh data.parquet -f csv -o ./clean/
+./duck-shard.sh events/ --sql transform.sql --url https://api.company.com/ingest
+./duck-shard.sh --ui  # Web interface at localhost:8080
+```
 
 ---
 
-## Quick Start
+## Install & Run
 
-**Install:**
 ```bash
+# Install dependencies
 brew install duckdb jq
+
+# Download duck-shard
 curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
 chmod +x duck-shard.sh
+
+# Convert some files
+./duck-shard.sh ./data/ --format csv --output ./processed/
+
+# Or use the web UI
+./duck-shard.sh --ui
 ```
 
-**Convert files:**
-```bash
-./duck-shard.sh ./data/ --format csv --output ./output/
-```
-
-**Stream to API:**
-```bash
-./duck-shard.sh ./data/ --url https://api.example.com/events --rows 1000
-```
-
-**Web Interface:**
-```bash
-./duck-shard.sh --ui  # Start web UI at http://localhost:8080
-```
+Open http://localhost:8080 for a visual interface with real-time progress bars and drag-and-drop configuration.
 
 ---
 
-## Key Features
+## What it does
 
-- **🔥 API Streaming** - POST to HTTP endpoints with batching & retry logic
-- **🚀 Parallel Processing** - Utilize all CPU cores automatically  
-- **🛠️ SQL Transforms** - Apply custom SQL with DuckDB's engine
-- **☁️ Cloud Native** - Read/write GCS, S3, local storage
-- **🎯 jq Transforms** - Powerful JSON transformations
-- **🌐 Web Interface** - Visual configuration with real-time progress
-- **🔍 Preview Mode** - Test on sample data first
-- **📦 Zero Dependencies** - Just DuckDB + jq + bash
+**File conversion:** Parquet ↔ CSV ↔ NDJSON
+**SQL transforms:** Full DuckDB power on any file format
+**JSON transforms:** jq expressions for reshaping data
+**API streaming:** POST results directly to webhooks
+**Cloud storage:** Read/write GCS and S3 buckets
+**Column selection:** Pick specific fields, handle tricky names like `$email`
+**Progress bars:** See exactly what's happening during long operations
 
 ---
 
@@ -51,60 +61,102 @@ chmod +x duck-shard.sh
 
 ```bash
 # Basic conversion
-./duck-shard.sh data/ -f csv -o ./out/
+./duck-shard.sh data/ -f csv -o ./output/
 
-# SQL transformation  
-./duck-shard.sh data/ --sql transform.sql -f ndjson -o ./processed/
+# Select specific columns (use single quotes for $ names)
+./duck-shard.sh data.json -f csv --cols 'user_id,$email,timestamp' -o ./clean/
 
-# Stream to webhook with auth
-./duck-shard.sh data/ --url https://api.example.com/webhook \
-  --header "Authorization: Bearer token" -r 1000
+# SQL transformation
+./duck-shard.sh events.parquet --sql ./transform.sql -f ndjson -o ./processed/
 
-# JSON transformation
+# Stream to API with batching
+./duck-shard.sh data/ --url https://api.example.com/ingest \
+  --header "Authorization: Bearer token" --rows 1000
+
+# JSON transformation with jq
 ./duck-shard.sh events.csv -f ndjson \
-  --jq 'select(.event == "purchase") | {user: .user_id, amount: .revenue}' \
+  --jq 'select(.event == "purchase") | {user: .user_id, revenue}' \
   -o ./purchases/
 
 # Preview before processing
-./duck-shard.sh large_dataset.parquet --preview 10 -f csv
+./duck-shard.sh huge-file.parquet --preview 10 -f csv
 
 # Cloud storage
-./duck-shard.sh gs://bucket/data/ -f csv -o s3://other-bucket/output/
+./duck-shard.sh gs://my-bucket/data/ -f csv -o s3://other-bucket/results/
+
+# Single file output with custom name
+./duck-shard.sh data/ --single-file -o ./merged-data.ndjson
 ```
+
+---
+
+## Web UI
+
+Launch the web interface for visual configuration:
+
+```bash
+./duck-shard.sh --ui
+```
+
+Features:
+- Drag-and-drop file selection
+- Visual column picker
+- Real-time progress tracking via WebSockets
+- Command preview and copy
+- Built-in examples and validation
+
+Perfect for prototyping transforms before scripting them.
+
+---
+
+## Performance Philosophy
+
+The magic happens when you combine:
+
+**DuckDB** for columnar analytics - processes GB files in seconds
+**Parallel execution** across all CPU cores automatically
+**Streaming architecture** - no loading entire datasets into memory
+**Smart batching** - optimal chunk sizes for both storage and APIs
+
+Result: Spark-like performance without the operational complexity. I've processed 100GB+ datasets on a MacBook faster than most "big data" stacks.
 
 ---
 
 ## CLI Reference
 
 ```bash
-./duck-shard.sh <input_path> [max_parallel_jobs] [options]
+./duck-shard.sh <input> [options]
 ```
 
-**Core Options:**
-- `-f, --format` - Output format: `ndjson`, `csv`, `parquet`
-- `-o, --output` - Output directory (local or cloud)
-- `-r, --rows` - Split into batches of N rows per file
-- `-s, --single-file` - Merge everything into one file
-- `--sql` - Apply SQL transformation
-- `--jq` - Apply jq transformation to JSON
-- `--preview` - Preview mode (don't write files)
-- `--ui` - Start web interface
+**Core:**
+- `-f, --format` - Output: `ndjson`, `csv`, `parquet`
+- `-o, --output` - Directory or file path (detects automatically in `--single-file` mode)
+- `-s, --single-file` - Merge all inputs into one output
+- `--cols` - Column selection: `'col1,$email,col3'` (use single quotes for $ names)
+- `--sql` - Custom SQL file (gets `input_data` view)
+- `--jq` - JSON transformation expression
+- `--preview` - Test on first N rows without writing files
+- `--verbose` - Show SQL commands and progress bars
 
 **API Streaming:**
-- `--url` - POST to HTTP endpoint
-- `--header` - Add HTTP header (repeatable)
-- `--log` - Log responses to file
+- `--url` - POST endpoint for results
+- `--header` - HTTP headers (repeatable)
+- `--rows` - Batch size (default: 1000 with `--url`)
+- `--log` - Save all HTTP responses
 
-**Cloud Storage:**
-- `--gcs-key/--gcs-secret` - GCS credentials
-- `--s3-key/--s3-secret` - S3 credentials
+**Cloud:**
+- `--gcs-key/--gcs-secret` - Google Cloud Storage HMAC
+- `--s3-key/--s3-secret` - AWS S3 credentials
 
-Run `./duck-shard.sh --help` for complete options.
+**UI:**
+- `--ui` - Launch web interface at localhost:8080
+
+Run `./duck-shard.sh --help` for the complete list.
 
 ---
 
 ## License
 
-MIT — go wild with your data!
+MIT — AK
 
-**PRs welcome:** [github.com/ak--47/duck-shard](https://github.com/ak--47/duck-shard)
+[Issues & PRs welcome](https://github.com/ak--47/duck-shard)
