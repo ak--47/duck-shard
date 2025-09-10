@@ -28,6 +28,26 @@
 				}
 			],
 			"console": "integratedTerminal"
+		},
+		{
+			"name": "ui",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/server.mjs",
+			"console": "integratedTerminal",
+			"env": {
+				"NODE_ENV": "development",
+				"PORT": "8080"
+			},
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"outputCapture": "std",
+			"restart": true,
+			"runtimeArgs": [
+				"--watch",
+				"--inspect"
+			]
 		}
 		// {
 		//     "name": "Debug parquet-to.sh with sample data",
