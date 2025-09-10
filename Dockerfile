@@ -44,8 +44,8 @@ ENV PORT=8080
 ENV NODE_ENV=production
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:$PORT/health || exit 1
+# HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+#     CMD curl -f http://localhost:$PORT/health || exit 1
 
 # Expose the port
 EXPOSE $PORT
