@@ -298,16 +298,18 @@ load_cloud_creds() {
 
 run_duckdb() {
   local cmd="$1"
-  local final_cmd="$cloud_secret_sql $cmd"
+  # Enable progress bar and add to cloud credentials setup
+  local final_cmd="$cloud_secret_sql SET enable_progress_bar=true; $cmd"
   if $VERBOSE; then
     echo -e "\n[duck-shard:VERBOSE] duckdb -c \"$final_cmd\"\n"
   fi
+  
   # Create a temporary file to capture stderr
   local temp_err=$(mktemp)
-  local output exit_code
+  local exit_code
   
-  # Execute DuckDB and capture stderr separately
-  output=$(duckdb -c "$final_cmd" 2>"$temp_err")
+  # Execute DuckDB with real-time stdout (for progress bars) but capture stderr
+  duckdb -c "$final_cmd" 2>"$temp_err"
   exit_code=$?
   
   # Read stderr content
@@ -324,8 +326,7 @@ run_duckdb() {
     return 1
   fi
   
-  # Filter out the DuckDB success message from output
-  echo "$output" | grep -v "^┌─────────┐$" | grep -v "^│ Success │$" | grep -v "^│ boolean │$" | grep -v "^├─────────┤$" | grep -v "^│ true    │$" | grep -v "^└─────────┘$" || true
+  return 0
 }
 
 find_input_files() {
@@ -349,7 +350,18 @@ select_clause() {
   if [[ -z "${SELECT_COLUMNS:-}" || "${SELECT_COLUMNS// /}" == "" || "$SELECT_COLUMNS" == "*" ]]; then
     echo "*"
   else
-    echo "$SELECT_COLUMNS"
+    # Quote column names that contain special characters like $, spaces, etc.
+    local quoted_columns=""
+    local col
+    echo "$SELECT_COLUMNS" | tr ',' '\n' | while read -r col; do
+      col=$(echo "$col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  # trim whitespace
+      # Check if column needs quoting (contains $ or other special chars)
+      if echo "$col" | grep -q '[$@#. -]'; then
+        printf '"%s",' "$col"
+      else
+        printf '%s,' "$col"
+      fi
+    done | sed 's/,$//'  # Remove trailing comma
   fi
 }
 
@@ -852,10 +864,17 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
   fi
 
   if $SINGLE_FILE; then
-    # Determine default output directory - use source directory when OUTPUT_DIR not specified
-    default_output_dir=""
+    # In single-file mode, check if OUTPUT_DIR looks like a file path
     if [[ -n "${OUTPUT_DIR:-}" ]]; then
-      default_output_dir="${OUTPUT_DIR}"
+      # If OUTPUT_DIR has an extension or ends with a filename, treat it as a file path
+      if [[ "${OUTPUT_DIR##*/}" == *.* ]] && [[ ! -d "${OUTPUT_DIR}" ]]; then
+        # OUTPUT_DIR is a file path, extract directory and filename
+        OUTPUT_FILENAME="${OUTPUT_DIR}"
+        default_output_dir="$(dirname "${OUTPUT_DIR}")"
+      else
+        # OUTPUT_DIR is a directory path
+        default_output_dir="${OUTPUT_DIR}"
+      fi
     elif [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       if [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         default_output_dir="$(dirname "$INPUT_PATH")"
@@ -870,7 +889,12 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         base_name="$(basename "${INPUT_PATH%/}")"
         base_name=$(fix_glob_name "$base_name")
-        merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        # Don't add _merged if already contains merged
+        if [[ "$base_name" == *"merged"* ]]; then
+          merged_filename=$(build_output_filename "$base_name" "$EXT")
+        else
+          merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        fi
         OUTPUT_FILENAME="${default_output_dir%/}/$merged_filename"
       else
         base_name="$(basename "$INPUT_PATH")"
@@ -878,7 +902,12 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
         if [[ "$base_name" == *.* ]]; then
           base_name="${base_name%.*}"
         fi
-        merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        # Don't add _merged if already contains merged
+        if [[ "$base_name" == *"merged"* ]]; then
+          merged_filename=$(build_output_filename "$base_name" "$EXT")
+        else
+          merged_filename=$(build_output_filename "${base_name}_merged" "$EXT")
+        fi
         OUTPUT_FILENAME="${default_output_dir%/}/$merged_filename"
       fi
     elif [[ "${OUTPUT_FILENAME}" != /* && ! "${OUTPUT_FILENAME}" =~ ^(gs|s3):// ]]; then

@@ -676,7 +676,7 @@ class DuckShardUI {
 			if (jqExpression) command += ` --jq '${jqExpression}'`;
 
 			const selectColumns = document.getElementById('selectColumns').value;
-			if (selectColumns) command += ` --cols "${selectColumns}"`;
+			if (selectColumns) command += ` --cols '${selectColumns}'`;
 
 			if (document.getElementById('dedupe').checked) {
 				command += ' --dedupe';
