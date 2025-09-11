@@ -13,21 +13,37 @@ No Python environments. No Spark clusters. No Docker containers. Just fast, reli
 Convert massive datasets between formats, apply SQL/jq transforms, stream to APIs. Built on DuckDB + bash + curl. Has a web UI. Stupid fast.
 
 ```bash
-# Get it
+# Get it (Homebrew - easiest)
+brew tap ak--47/tap && brew install duck-shard
+
+# Or download directly
 curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
 
 # Use it
-./duck-shard.sh data.parquet -f csv -o ./clean/
-./duck-shard.sh events/ --sql transform.sql --url https://api.company.com/ingest
-./duck-shard.sh --ui  # Web interface at localhost:8080
+duck-shard data.parquet -f csv -o ./clean/
+duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
+duck-shard --ui  # Web interface at localhost:8080
 ```
 
 ---
 
 ## Install & Run
 
+**Option 1: Homebrew (Recommended)**
 ```bash
-# Install dependencies
+# Install duck-shard and dependencies in one command
+brew tap ak--47/tap && brew install duck-shard
+
+# Convert some files
+duck-shard ./data/ --format csv --output ./processed/
+
+# Or use the web UI
+duck-shard --ui
+```
+
+**Option 2: Manual Download**
+```bash
+# Install dependencies first
 brew install duckdb jq
 
 # Download duck-shard
@@ -36,9 +52,6 @@ chmod +x duck-shard.sh
 
 # Convert some files
 ./duck-shard.sh ./data/ --format csv --output ./processed/
-
-# Or use the web UI
-./duck-shard.sh --ui
 ```
 
 Open http://localhost:8080 for a visual interface with real-time progress bars and drag-and-drop configuration.
@@ -61,34 +74,34 @@ Open http://localhost:8080 for a visual interface with real-time progress bars a
 
 ```bash
 # Basic conversion
-./duck-shard.sh data/ -f csv -o ./output/
+duck-shard data/ -f csv -o ./output/
 
 # Select specific columns (use single quotes for $ names)
-./duck-shard.sh data.json -f csv --cols 'user_id,$email,timestamp' -o ./clean/
+duck-shard data.json -f csv --cols 'user_id,$email,timestamp' -o ./clean/
 
 # SQL transformation (ETL mode)
-./duck-shard.sh events.parquet --sql ./transform.sql -f ndjson -o ./processed/
+duck-shard events.parquet --sql ./transform.sql -f ndjson -o ./processed/
 
 # Analytical mode (no --format = display results + save CSV)  
-./duck-shard.sh sales.parquet --sql ./monthly_analysis.sql -o ./reports/
+duck-shard sales.parquet --sql ./monthly_analysis.sql -o ./reports/
 
 # Stream to API with batching
-./duck-shard.sh data/ --url https://api.example.com/ingest \
+duck-shard data/ --url https://api.example.com/ingest \
   --header "Authorization: Bearer token" --rows 1000
 
 # JSON transformation with jq
-./duck-shard.sh events.csv -f ndjson \
+duck-shard events.csv -f ndjson \
   --jq 'select(.event == "purchase") | {user: .user_id, revenue}' \
   -o ./purchases/
 
 # Preview before processing
-./duck-shard.sh huge-file.parquet --preview 10 -f csv
+duck-shard huge-file.parquet --preview 10 -f csv
 
 # Cloud storage
-./duck-shard.sh gs://my-bucket/data/ -f csv -o s3://other-bucket/results/
+duck-shard gs://my-bucket/data/ -f csv -o s3://other-bucket/results/
 
 # Single file output with custom name
-./duck-shard.sh data/ --single-file -o ./merged-data.ndjson
+duck-shard data/ --single-file -o ./merged-data.ndjson
 ```
 
 ---
@@ -99,12 +112,12 @@ duck-shard has two SQL modes depending on whether you specify `--format`:
 
 **ETL Mode** (with `--format`): Transform data and output in specified format
 ```bash
-./duck-shard.sh data.parquet --sql ./transform.sql -f ndjson -o ./processed/
+duck-shard data.parquet --sql ./transform.sql -f ndjson -o ./processed/
 ```
 
 **Analytical Mode** (no `--format`): Display results in terminal + save as CSV
 ```bash
-./duck-shard.sh data.parquet --sql ./analysis.sql -o ./reports/
+duck-shard data.parquet --sql ./analysis.sql -o ./reports/
 # Shows formatted table in terminal AND saves query_result.csv
 ```
 
@@ -132,7 +145,7 @@ Works with any file format - duck-shard handles the loading, you write the analy
 Launch the web interface for visual configuration:
 
 ```bash
-./duck-shard.sh --ui
+duck-shard --ui
 ```
 
 Features:
@@ -162,7 +175,7 @@ Result: Spark-like performance without the operational complexity. I've processe
 ## CLI Reference
 
 ```bash
-./duck-shard.sh <input> [options]
+duck-shard <input> [options]
 ```
 
 **Core:**
@@ -188,7 +201,7 @@ Result: Spark-like performance without the operational complexity. I've processe
 **UI:**
 - `--ui` - Launch web interface at localhost:8080
 
-Run `./duck-shard.sh --help` for the complete list.
+Run `duck-shard --help` for the complete list.
 
 ---
 
