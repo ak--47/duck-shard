@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
 # duck-shard.sh – DuckDB-based ETL/conversion for local/cloud files, cross-platform.
+# Auto-updated via GitHub Actions
 
 if [ -f .env ]; then
   set -a
