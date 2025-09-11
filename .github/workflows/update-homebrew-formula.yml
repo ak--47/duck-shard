@@ -1,0 +1,110 @@
+name: Update Homebrew Formula
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'duck-shard.sh'
+      - 'package.json'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get latest version
+        id: version
+        run: |
+          # Try to get version from package.json, fallback to git tag, then main
+          if [ -f package.json ]; then
+            VERSION=$(jq -r '.version' package.json)
+          else
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "main")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+      
+      - name: Download latest duck-shard.sh
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" == "main" ]]; then
+            curl -sL "https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh" -o duck-shard.sh
+            URL="https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh"
+          else
+            curl -sL "https://raw.githubusercontent.com/ak--47/duck-shard/v${VERSION}/duck-shard.sh" -o duck-shard.sh
+            URL="https://raw.githubusercontent.com/ak--47/duck-shard/v${VERSION}/duck-shard.sh"
+          fi
+          echo "URL=$URL" >> $GITHUB_ENV
+      
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA256=$(sha256sum duck-shard.sh | awk '{print $1}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+      
+      - name: Checkout homebrew-tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: ak--47/homebrew-tap
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: homebrew-tap
+      
+      - name: Update Formula
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA256="${{ steps.sha.outputs.sha256 }}"
+          
+          cd homebrew-tap
+          
+          # Update the formula file
+          sed -i "s|url \".*\"|url \"$URL\"|" Formula/duck-shard.rb
+          sed -i "s|version \".*\"|version \"$VERSION\"|" Formula/duck-shard.rb
+          sed -i "s|sha256 \".*\"|sha256 \"$SHA256\"|" Formula/duck-shard.rb
+          
+          echo "Updated formula:"
+          cat Formula/duck-shard.rb
+      
+      - name: Commit and push changes
+        run: |
+          cd homebrew-tap
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git add Formula/duck-shard.rb
+          git commit -m "Auto-update duck-shard formula to ${{ steps.version.outputs.version }}
+
+          - URL: $URL
+          - SHA256: ${{ steps.sha.outputs.sha256 }}
+          - Triggered by: ${{ github.event_name }}
+          - Commit: ${{ github.sha }}"
+          
+          git push
+      
+      - name: Create summary
+        run: |
+          echo "## Homebrew Formula Updated! 🍺" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256**: \`${{ steps.sha.outputs.sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: $URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Users can now install the latest version with:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "brew tap ak--47/tap" >> $GITHUB_STEP_SUMMARY
+          echo "brew upgrade duck-shard  # or brew install duck-shard for new installs" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
