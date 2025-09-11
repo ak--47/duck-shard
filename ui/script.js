@@ -209,8 +209,14 @@ class DuckShardUI {
 	}
 
 	fillDevValues() {
-		// Fill with example values for quick testing
-		document.getElementById('localPath').value = './tests/testData/';
+		// Fill with Google Cloud Storage example values for quick testing
+		
+		// Select GCS input source
+		document.querySelector('input[name="inputSource"][value="gcs"]').checked = true;
+		this.toggleInputSource();
+		
+		// Set GCS path to public dataset
+		document.getElementById('gcsPath').value = 'gs://mixpanel-import-public-data/example-dnd-events.json';
 		document.getElementById('outputFormat').value = 'ndjson';
 		document.getElementById('outputPath').value = './output/';
 		
@@ -229,7 +235,7 @@ class DuckShardUI {
 		}
 
 		this.updateCLICommand();
-		console.log('Dev values filled successfully');
+		console.log('Dev values filled with GCS public dataset');
 	}
 
 	toggleInputSource() {
