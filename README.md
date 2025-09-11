@@ -13,13 +13,10 @@ No Python environments. No Spark clusters. No Docker containers. Just fast, reli
 Convert massive datasets between formats, apply SQL/jq transforms, stream to APIs. Built on DuckDB + bash + curl. Has a web UI. Stupid fast.
 
 ```bash
-# Get it (Homebrew - easiest)
+# Install
 brew tap ak--47/tap && brew install duck-shard
 
-# Or download directly
-curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
-
-# Use it
+# Convert data
 duck-shard data.parquet -f csv -o ./clean/
 duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
 duck-shard --ui  # Web interface at localhost:8080
@@ -27,34 +24,29 @@ duck-shard --ui  # Web interface at localhost:8080
 
 ---
 
-## Install & Run
+## Install
 
-**Option 1: Homebrew (Recommended)**
 ```bash
-# Install duck-shard and dependencies in one command
 brew tap ak--47/tap && brew install duck-shard
+```
 
-# Convert some files
+That's it! Dependencies (DuckDB) are handled automatically.
+
+**Alternative**: Download directly
+```bash
+curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
+# Requires: brew install duckdb jq
+```
+
+## Quick Start
+
+```bash
+# Convert files
 duck-shard ./data/ --format csv --output ./processed/
 
-# Or use the web UI
-duck-shard --ui
+# Web interface
+duck-shard --ui  # Open http://localhost:8080
 ```
-
-**Option 2: Manual Download**
-```bash
-# Install dependencies first
-brew install duckdb jq
-
-# Download duck-shard
-curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh
-chmod +x duck-shard.sh
-
-# Convert some files
-./duck-shard.sh ./data/ --format csv --output ./processed/
-```
-
-Open http://localhost:8080 for a visual interface with real-time progress bars and drag-and-drop configuration.
 
 ---
 
