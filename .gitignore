@@ -12,3 +12,4 @@ duckdb_init.sql
 tests/response-logs.json
 todos.txt
 node_modules
+CLAUDE.md
