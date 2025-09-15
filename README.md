@@ -13,39 +13,55 @@ No Python environments. No Spark clusters. No Docker containers. Just fast, reli
 Convert massive datasets between formats, apply SQL/jq transforms, stream to APIs. Built on DuckDB + bash + curl. Has a web UI. Stupid fast.
 
 ```bash
-# Install
-brew tap ak--47/tap && brew install duck-shard
+# Install and run
+npx duck-shard
 
-# Convert data
-duck-shard data.parquet -f csv -o ./clean/
-duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
-duck-shard --ui  # Web interface at localhost:8080
+# CLI usage
+npx duck-shard data.parquet -f csv -o ./clean/
+npx duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
 ```
 
 ---
 
 ## Install
 
+### Option 1: npx (recommended)
+```bash
+npx duck-shard
+```
+No installation needed! Just run it. Dependencies are checked automatically.
+
+### Option 2: npm global install
+```bash
+npm install -g duck-shard
+duck-shard --ui
+```
+
+### Option 3: Homebrew (legacy)
 ```bash
 brew tap ak--47/tap && brew install duck-shard
 ```
 
-That's it! Dependencies (DuckDB) are handled automatically.
-
-**Alternative**: Download directly
-```bash
-curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
-# Requires: brew install duckdb jq
-```
+**Dependencies**: DuckDB and curl are required. jq is optional.
+- **macOS**: `brew install duckdb jq`
+- **Linux**: `apt-get install duckdb jq curl` or `yum install duckdb jq curl`
+- **Windows**: `winget install DuckDB.cli jqlang.jq`
 
 ## Quick Start
 
+### Web Interface (Recommended)
+```bash
+npx duck-shard          # Starts web UI at http://localhost:8080
+npx duck-shard --ui     # Same as above
+```
+
+### Command Line
 ```bash
 # Convert files
-duck-shard ./data/ --format csv --output ./processed/
+npx duck-shard ./data/ --format csv --output ./processed/
 
-# Web interface
-duck-shard --ui  # Open http://localhost:8080
+# Transform and stream to API
+npx duck-shard ./events.json --sql "SELECT * WHERE event='purchase'" --url https://api.company.com/ingest
 ```
 
 ---

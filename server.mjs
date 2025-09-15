@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import fs from 'fs';
+import { checkDependencies, printInstallationInstructions } from './lib/check-dependencies.mjs';
+import { showMiniBanner } from './lib/banner.mjs';
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
@@ -18,12 +20,8 @@ const OPTIONAL_ENV_VARS = [
     'S3_SECRET'
 ];
 
+// Silently track missing env vars (don't spam console on startup)
 const missingVars = OPTIONAL_ENV_VARS.filter(k => !process.env[k]);
-if (missingVars.length > 0) {
-    console.warn('\nWARNING: Missing optional environment variables (cloud storage may not work):');
-    missingVars.forEach(v => console.warn('  - ' + v));
-    console.warn('These can be provided via request body or set as env vars.\n');
-}
 
 
 const app = express();
@@ -343,10 +341,36 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-server.listen(port, '0.0.0.0', () => {
-    console.log(`🦆 Duck Shard API running on port ${port}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Health check: http://localhost:${port}/health`);
-    console.log(`Web UI: http://localhost:${port}/`);
-    console.log(`WebSocket support enabled for real-time progress`);
+// Check dependencies before starting server
+async function startServer() {
+    // Only show banner if called directly (not from CLI wrapper)
+    if (process.argv[1].endsWith('server.mjs')) {
+        showMiniBanner();
+        console.log('Checking system dependencies...\n');
+    }
+
+    const { allPresent, results } = await checkDependencies(true); // Silent mode
+
+    if (!allPresent) {
+        printInstallationInstructions(results);
+        console.log('\n❌ Missing required dependencies. Please install them and restart the server.');
+        process.exit(1);
+    }
+
+    // Show cloud storage notice only if relevant
+    if (missingVars.length > 0) {
+        console.log(`💡 Cloud storage credentials can be provided via UI or environment variables.`);
+    }
+
+    server.listen(port, '0.0.0.0', () => {
+        console.log(`🦆 Duck Shard running on http://localhost:${port}`);
+        console.log(`📊 Web UI: http://localhost:${port}/`);
+        console.log(`❤️  Built by AK - Ready for data processing!\n`);
+    });
+}
+
+// Start the server
+startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
 });
