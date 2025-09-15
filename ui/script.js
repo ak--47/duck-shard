@@ -3,6 +3,7 @@ class DuckShardUI {
 	constructor() {
 		this.websocket = null;
 		this.currentJobId = null;
+		this.sqlEditor = null;
 		this.initializeUI();
 		this.setupEventListeners();
 	}
@@ -12,10 +13,10 @@ class DuckShardUI {
 		try {
 			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 			const wsUrl = `${protocol}//${window.location.host}`;
-			
+
 			this.websocket = new WebSocket(wsUrl);
 			this.currentJobId = jobId;
-			
+
 			this.websocket.onopen = () => {
 				// Register this connection with the job
 				this.websocket.send(JSON.stringify({
@@ -23,7 +24,7 @@ class DuckShardUI {
 					jobId: jobId
 				}));
 			};
-			
+
 			this.websocket.onmessage = (event) => {
 				try {
 					const data = JSON.parse(event.data);
@@ -32,21 +33,21 @@ class DuckShardUI {
 					console.error('Failed to parse WebSocket message:', error);
 				}
 			};
-			
+
 			this.websocket.onerror = (error) => {
 				console.error('WebSocket error:', error);
 			};
-			
+
 			this.websocket.onclose = () => {
 				this.websocket = null;
 				this.currentJobId = null;
 			};
-			
+
 		} catch (error) {
 			console.error('Failed to connect WebSocket:', error);
 		}
 	}
-	
+
 	disconnectWebSocket() {
 		if (this.websocket) {
 			this.websocket.close();
@@ -54,51 +55,51 @@ class DuckShardUI {
 			this.currentJobId = null;
 		}
 	}
-	
+
 	handleWebSocketMessage(data) {
 		if (data.jobId !== this.currentJobId) {
 			return; // Ignore messages for other jobs
 		}
-		
+
 		switch (data.type) {
 			case 'job-registered':
 				break;
-				
+
 			case 'progress':
 				this.updateProgressDisplay(data.data);
 				break;
-				
+
 			case 'job-complete':
 				this.hideLoading();
 				this.showResults(data.result, false);
 				this.disconnectWebSocket();
 				break;
-				
+
 			case 'job-error':
 				console.error('Job failed:', data.error);
 				this.hideLoading();
 				this.showError(`Processing failed: ${data.error}`);
 				this.disconnectWebSocket();
 				break;
-				
+
 			default:
-				// Unknown message type - ignore silently
+			// Unknown message type - ignore silently
 		}
 	}
-	
+
 	updateProgressDisplay(progressData) {
 		// Update the loading message with real-time progress
 		const loadingDetails = document.querySelector('.loading-details');
 		if (loadingDetails && progressData) {
 			const { processed, requests, throughput, memory } = progressData;
-			
+
 			const formatNumber = (num) => {
 				if (typeof num === 'number') {
 					return num.toLocaleString();
 				}
 				return num || '0';
 			};
-			
+
 			const formatBytes = (bytes) => {
 				if (!bytes || bytes === 0) return '0 B';
 				const k = 1024;
@@ -106,7 +107,7 @@ class DuckShardUI {
 				const i = Math.floor(Math.log(bytes) / Math.log(k));
 				return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 			};
-			
+
 			loadingDetails.innerHTML = `
 				<div class="progress-stats">
 					${processed ? `
@@ -137,6 +138,55 @@ class DuckShardUI {
 	initializeUI() {
 		// Set default values
 		this.updateCLICommand();
+		// Initialize Monaco Editor
+		this.initializeMonacoEditor();
+	}
+
+	initializeMonacoEditor() {
+		// Wait for Monaco loader to be available
+		if (typeof window.require === 'undefined') {
+			// Monaco loader not ready yet, try again in a bit
+			setTimeout(() => this.initializeMonacoEditor(), 100);
+			return;
+		}
+
+		// Configure Monaco Editor to load from CDN
+		window.require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
+
+		window.require(['vs/editor/editor.main'], () => {
+			const editorContainer = document.getElementById('sql-editor');
+			const hiddenTextarea = document.getElementById('sqlInline');
+
+			if (editorContainer) {
+				this.sqlEditor = monaco.editor.create(editorContainer, {
+					value: '',
+					placeholder: 'SELECT * FROM input_data WHERE event = \'purchase\' ORDER BY timestamp DESC',
+					language: 'sql',
+					theme: 'vs-dark',
+					minimap: { enabled: false },
+					lineNumbers: 'on',
+					roundedSelection: false,
+					scrollBeyondLastLine: false,
+					automaticLayout: true,
+					fontSize: 14,
+					fontFamily: '\'SF Mono\', \'Monaco\', \'Cascadia Code\', \'Roboto Mono\', Consolas, \'Courier New\', monospace',
+					wordWrap: 'on',
+					padding: { top: 12, bottom: 12 },
+					suggestOnTriggerCharacters: true,
+					acceptSuggestionOnEnter: 'on',
+					tabCompletion: 'on'
+				});
+
+				// Sync Monaco Editor content with hidden textarea
+				this.sqlEditor.onDidChangeModelContent(() => {
+					hiddenTextarea.value = this.sqlEditor.getValue();
+					this.updateCLICommand();
+				});
+
+				// Initialize the hidden textarea with editor content
+				hiddenTextarea.value = this.sqlEditor.getValue();
+			}
+		});
 	}
 
 	setupEventListeners() {
@@ -151,6 +201,7 @@ class DuckShardUI {
 		outputModeRadios.forEach(radio => {
 			radio.addEventListener('change', this.toggleOutputMode.bind(this));
 		});
+
 
 		// Form submission
 		const form = document.getElementById('duckShardForm');
@@ -210,28 +261,32 @@ class DuckShardUI {
 
 	fillDevValues() {
 		// Fill with Google Cloud Storage example values for quick testing
-		
+
 		// Select GCS input source
 		document.querySelector('input[name="inputSource"][value="gcs"]').checked = true;
 		this.toggleInputSource();
-		
+
 		// Set GCS path to public dataset
 		document.getElementById('gcsPath').value = 'gs://mixpanel-import-public-data/example-dnd-events.json';
 		document.getElementById('outputFormat').value = 'ndjson';
 		document.getElementById('outputPath').value = './output/';
-		
-		// Select API mode for demo
-		document.querySelector('input[name="outputMode"][value="api"]').checked = true;
+
+		// Select file output mode (default)
+		document.querySelector('input[name="outputMode"][value="file"]').checked = true;
 		this.toggleOutputMode();
-		
-		document.getElementById('apiUrl').value = 'https://httpbin.org/post';
-		document.getElementById('batchSize').value = '500';
-		
-		// Add an example header
-		const headerRows = document.querySelectorAll('.header-row');
-		if (headerRows.length > 0) {
-			headerRows[0].querySelector('.header-name').value = 'Authorization';
-			headerRows[0].querySelector('.header-value').value = 'Bearer test-token';
+
+		// Add some delay for Monaco Editor to initialize
+		setTimeout(() => {
+			if (this.sqlEditor) {
+				this.sqlEditor.layout();
+			}
+		}, 100);
+
+		// Set SQL in both Monaco Editor and hidden textarea
+		const sqlQuery = 'SELECT * FROM input_data WHERE event = \'page_view\' LIMIT 100';
+		document.getElementById('sqlInline').value = sqlQuery;
+		if (this.sqlEditor) {
+			this.sqlEditor.setValue(sqlQuery);
 		}
 
 		this.updateCLICommand();
@@ -275,24 +330,21 @@ class DuckShardUI {
 		const outputMode = document.querySelector('input[name="outputMode"]:checked').value;
 		const fileOutput = document.getElementById('file-output');
 		const apiOutput = document.getElementById('api-output');
-		const previewOutput = document.getElementById('preview-output');
 
 		// Hide all output sections first
 		fileOutput.style.display = 'none';
 		apiOutput.style.display = 'none';
-		previewOutput.style.display = 'none';
 
 		// Show the selected output section
 		if (outputMode === 'file') {
 			fileOutput.style.display = 'block';
 		} else if (outputMode === 'api') {
 			apiOutput.style.display = 'block';
-		} else if (outputMode === 'preview') {
-			previewOutput.style.display = 'block';
 		}
 
 		this.updateCLICommand();
 	}
+
 
 	addHeaderRow() {
 		const container = document.getElementById('headers-container');
@@ -312,7 +364,7 @@ class DuckShardUI {
 		document.querySelectorAll('.remove-header-btn').forEach(btn => {
 			btn.replaceWith(btn.cloneNode(true)); // Remove existing listeners
 		});
-		
+
 		document.querySelectorAll('.remove-header-btn').forEach(btn => {
 			btn.addEventListener('click', (e) => {
 				const headerRow = e.target.closest('.header-row');
@@ -394,7 +446,7 @@ class DuckShardUI {
 
 		// Try to extract JSON data from logs
 		let previewData = 'No preview data available';
-		
+
 		// Look for JSON lines in the output
 		const lines = logs.split('\n');
 		const jsonLines = lines.filter(line => {
@@ -501,28 +553,28 @@ class DuckShardUI {
 		if (outputMode === 'file') {
 			formData.format = document.getElementById('outputFormat').value;
 			formData.output = document.getElementById('outputPath').value;
-			
+
 			const rowsPerFile = document.getElementById('rowsPerFile').value;
 			if (rowsPerFile && !document.getElementById('singleFile').checked) {
 				formData.rows = parseInt(rowsPerFile);
 			}
-			
+
 			if (document.getElementById('singleFile').checked) {
 				formData.single_file = true;
 			}
 		} else if (outputMode === 'api') {
 			formData.url = document.getElementById('apiUrl').value;
 			formData.format = 'ndjson'; // API streaming uses NDJSON
-			
+
 			const batchSize = document.getElementById('batchSize').value;
 			if (batchSize) {
 				formData.rows = parseInt(batchSize);
 			}
-			
+
 			if (document.getElementById('logResponses').checked) {
 				formData.log = true;
 			}
-			
+
 			// Collect headers
 			const headers = this.collectHeaders();
 			if (headers.length > 0) {
@@ -543,9 +595,9 @@ class DuckShardUI {
 			if (s3Secret) formData.s3_secret = s3Secret;
 		}
 
-		// Processing options
-		const sqlFile = document.getElementById('sqlFile').value;
-		if (sqlFile) formData.sql = sqlFile;
+		// Processing options - SQL inline only
+		const sqlInline = document.getElementById('sqlInline').value.trim();
+		if (sqlInline) formData.sql_inline = sqlInline;
 
 		const jqExpression = document.getElementById('jqExpression').value;
 		if (jqExpression) formData.jq = jqExpression;
@@ -573,7 +625,7 @@ class DuckShardUI {
 
 	getInputPath() {
 		const inputSource = document.querySelector('input[name="inputSource"]:checked').value;
-		
+
 		if (inputSource === 'local') {
 			return document.getElementById('localPath').value.trim();
 		} else if (inputSource === 'gcs') {
@@ -581,7 +633,7 @@ class DuckShardUI {
 		} else if (inputSource === 's3') {
 			return document.getElementById('s3Path').value.trim();
 		}
-		
+
 		return '';
 	}
 
@@ -599,7 +651,7 @@ class DuckShardUI {
 
 	updateCLICommand() {
 		const cliElement = document.getElementById('cli-command');
-		
+
 		try {
 			const inputPath = this.getInputPath();
 			if (!inputPath) {
@@ -655,9 +707,6 @@ class DuckShardUI {
 				headers.forEach(header => {
 					command += ` --header "${header}"`;
 				});
-			} else if (outputMode === 'preview') {
-				const previewRows = document.getElementById('previewRows').value;
-				command += ` --preview ${previewRows}`;
 			}
 
 			// Cloud credentials
@@ -674,9 +723,9 @@ class DuckShardUI {
 				if (s3Secret) command += ` --s3-secret "[HIDDEN]"`;
 			}
 
-			// Processing options
-			const sqlFile = document.getElementById('sqlFile').value;
-			if (sqlFile) command += ` --sql "${sqlFile}"`;
+			// Processing options - SQL inline only
+			const sqlInline = document.getElementById('sqlInline').value.trim();
+			if (sqlInline) command += ` --sql "<inline SQL>"`;
 
 			const jqExpression = document.getElementById('jqExpression').value;
 			if (jqExpression) command += ` --jq '${jqExpression}'`;
@@ -748,7 +797,7 @@ class DuckShardUI {
 	clearResults() {
 		const resultsSection = document.getElementById('results');
 		const resultsData = document.getElementById('results-data');
-		
+
 		if (resultsSection) {
 			resultsSection.style.display = 'none';
 		}
@@ -767,7 +816,7 @@ class DuckShardUI {
 		// Display the logs/output
 		const output = result.logs || result.error_logs || 'No output available';
 		resultsData.innerHTML = `<pre><code>${this.escapeHtml(output)}</code></pre>`;
-		
+
 		resultsSection.style.display = 'block';
 		resultsSection.scrollIntoView({ behavior: 'smooth' });
 	}
@@ -809,16 +858,16 @@ function toggleSection(sectionId) {
 	const section = document.getElementById(sectionId);
 	const header = section?.previousElementSibling || section?.parentElement?.querySelector('.section-header');
 	const toggleIcon = header?.querySelector('.toggle-icon');
-	
+
 	if (!section) return;
-	
+
 	const isVisible = section.style.display !== 'none';
 	section.style.display = isVisible ? 'none' : 'block';
-	
+
 	if (toggleIcon) {
 		toggleIcon.textContent = isVisible ? '▼' : '▲';
 	}
-	
+
 	if (header) {
 		header.setAttribute('aria-expanded', !isVisible);
 	}

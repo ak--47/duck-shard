@@ -111,6 +111,14 @@ body {
     z-index: 1;
 }
 
+.logo-image {
+    height: 108px;
+    margin-right: 63%;
+	position: absolute;
+    width: auto;
+    filter: drop-shadow(2px 2px 4px rgba(0, 0, 0, 0.3));
+}
+
 .logo-icon {
     font-size: 36px;
 }
@@ -755,7 +763,7 @@ input[type="radio"] {
         gap: 0.75rem;
         padding: 0.75rem;
     }
-    
+
     .stat-value {
         font-size: 1rem;
     }
