@@ -202,6 +202,9 @@ class DuckShardUI {
 			radio.addEventListener('change', this.toggleOutputMode.bind(this));
 		});
 
+		// Output format change (for XML configuration)
+		const outputFormat = document.getElementById('outputFormat');
+		outputFormat.addEventListener('change', this.toggleXMLConfig.bind(this));
 
 		// Form submission
 		const form = document.getElementById('duckShardForm');
@@ -274,6 +277,7 @@ class DuckShardUI {
 		// Select file output mode (default)
 		document.querySelector('input[name="outputMode"][value="file"]').checked = true;
 		this.toggleOutputMode();
+		this.toggleXMLConfig();
 
 		// Add some delay for Monaco Editor to initialize
 		setTimeout(() => {
@@ -340,6 +344,20 @@ class DuckShardUI {
 			fileOutput.style.display = 'block';
 		} else if (outputMode === 'api') {
 			apiOutput.style.display = 'block';
+		}
+
+		this.updateCLICommand();
+	}
+
+	toggleXMLConfig() {
+		const outputFormat = document.getElementById('outputFormat').value;
+		const xmlConfig = document.getElementById('xml-config');
+
+		// Show XML configuration only when XML format is selected
+		if (outputFormat === 'xml') {
+			xmlConfig.style.display = 'block';
+		} else {
+			xmlConfig.style.display = 'none';
 		}
 
 		this.updateCLICommand();
@@ -554,6 +572,14 @@ class DuckShardUI {
 			formData.format = document.getElementById('outputFormat').value;
 			formData.output = document.getElementById('outputPath').value;
 
+			// XML-specific configuration
+			if (formData.format === 'xml') {
+				const xmlRoot = document.getElementById('xmlRoot').value;
+				if (xmlRoot && xmlRoot !== 'root') {
+					formData.xml_root = xmlRoot;
+				}
+			}
+
 			const rowsPerFile = document.getElementById('rowsPerFile').value;
 			if (rowsPerFile && !document.getElementById('singleFile').checked) {
 				formData.rows = parseInt(rowsPerFile);
@@ -673,6 +699,14 @@ class DuckShardUI {
 			if (outputMode === 'file') {
 				const format = document.getElementById('outputFormat').value;
 				command += ` --format ${format}`;
+
+				// Add XML root element if format is XML and root is not default
+				if (format === 'xml') {
+					const xmlRoot = document.getElementById('xmlRoot').value.trim();
+					if (xmlRoot && xmlRoot !== 'root') {
+						command += ` --xml-root "${xmlRoot}"`;
+					}
+				}
 
 				const outputPath = document.getElementById('outputPath').value.trim();
 				if (outputPath) {

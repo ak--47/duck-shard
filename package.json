@@ -11,7 +11,7 @@
     "start": "node bin/duck-shard.mjs --ui",
     "dev": "node --watch server.mjs",
     "cli": "node bin/duck-shard.mjs",
-    "test": "echo \"No tests yet\" && exit 0",
+    "test": "bats tests/test.bats",
     "deploy": "./deploy.sh",
     "health": "curl -f http://localhost:${PORT:-8080}/health || exit 1"
   },

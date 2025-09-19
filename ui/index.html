@@ -37,7 +37,7 @@
 			<!-- Input Data Section -->
 			<section class="card">
 				<h2 class="section-title">📁 Input Data</h2>
-				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, and JSON formats from local files or cloud storage.</p>
+				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, JSON, and XML formats from local files or cloud storage.</p>
 
 				<!-- Input Source Toggle -->
 				<div class="input-source-toggle">
@@ -159,6 +159,7 @@
 								<option value="ndjson">NDJSON (recommended)</option>
 								<option value="csv">CSV</option>
 								<option value="parquet">Parquet</option>
+								<option value="xml">XML</option>
 							</select>
 							<small>Format for output files</small>
 						</div>
@@ -170,6 +171,20 @@
 								placeholder="./out/ or gs://bucket/out/"
 								autocomplete="off">
 							<small>Where to save processed files (local or cloud)</small>
+						</div>
+					</div>
+
+					<!-- XML Configuration (conditional) -->
+					<div id="xml-config" class="form-row" style="display: none;">
+						<div class="form-group">
+							<label for="xmlRoot">XML Root Element</label>
+							<input type="text"
+								id="xmlRoot"
+								name="xmlRoot"
+								placeholder="root"
+								value="root"
+								autocomplete="off">
+							<small>Root element name for XML parsing (default: root)</small>
 						</div>
 					</div>
 
