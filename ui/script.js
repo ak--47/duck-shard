@@ -269,7 +269,7 @@ class DuckShardUI {
 		// Set GCS path to public dataset
 		document.getElementById('gcsPath').value = 'gs://mixpanel-import-public-data/example-dnd-events.json';
 		document.getElementById('outputFormat').value = 'ndjson';
-		document.getElementById('outputPath').value = './output/';
+		document.getElementById('outputPath').value = './out/';
 
 		// Select file output mode (default)
 		document.querySelector('input[name="outputMode"][value="file"]').checked = true;

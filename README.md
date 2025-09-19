@@ -37,10 +37,11 @@ npm install -g duck-shard
 duck-shard --ui
 ```
 
-### Option 3: Homebrew (legacy)
+### Option 3: Homebrew (legacy - not recommended)
 ```bash
 brew tap ak--47/tap && brew install duck-shard
 ```
+*Note: Homebrew installation is deprecated. Use npx for the latest features.*
 
 **Dependencies**: DuckDB and curl are required. jq is optional.
 - **macOS**: `brew install duckdb jq`

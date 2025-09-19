@@ -1,6 +1,6 @@
-# 🦆 Duck Shard Cloud Run API
+# 🦆 Duck Shard Cloud Run Service
 
-A Cloud Run wrapper for duck-shard that provides a REST API for DuckDB ETL operations with jq transformations.
+Deploy Duck Shard as a Cloud Run service with both a web UI and REST API for DuckDB ETL operations with jq transformations.
 
 ## Quick Deploy
 
@@ -16,13 +16,18 @@ A Cloud Run wrapper for duck-shard that provides a REST API for DuckDB ETL opera
    ./deploy.sh
    ```
 
-## API Usage
+## Service Features
 
-### Endpoints
+### Web UI
+- **Interactive Interface**: Visual data processing pipeline builder
+- **Real-time Progress**: WebSocket-powered live updates during processing
+- **Monaco Editor**: SQL syntax highlighting for transformations
+- **Cloud Storage**: Built-in support for GCS and S3 credentials
 
-- `GET /` - API documentation and status
-- `GET /health` - Health check
-- `POST /run` - Execute duck-shard operations
+### API Endpoints
+- `GET /` - Serves the web UI interface
+- `GET /health` - Health check endpoint
+- `POST /run` - Execute duck-shard operations via REST API
 
 ### Example Requests
 
@@ -45,7 +50,7 @@ curl -X POST https://your-service-url/run \
   -d '{
     "input_path": "gs://bucket/input/",
     "format": "ndjson",
-    "output": "gs://bucket/output/",
+    "output": "gs://bucket/out/",
     "jq": "select(.event == \"purchase\") | {user: .user_id, amount: (.revenue | tonumber)}",
     "rows": 1000,
     "gcs_key": "your-key",
@@ -131,12 +136,21 @@ Set these in your `.env` file or Cloud Run environment:
 # Install dependencies
 npm install
 
-# Start development server
+# Start with web UI (recommended)
+npm start
+# OR: npx duck-shard --ui
+
+# Development mode with auto-reload
 npm run dev
 
-# Test locally
+# Test API programmatically
 node example-client.mjs http://localhost:8080
 ```
+
+### Accessing the Service
+- **Web UI**: http://localhost:8080 (user-friendly interface)
+- **API**: POST requests to http://localhost:8080/run (programmatic access)
+- **Health**: http://localhost:8080/health (monitoring)
 
 ## Monitoring
 
@@ -146,10 +160,11 @@ node example-client.mjs http://localhost:8080
 
 ## Security
 
-- Runs as non-root user in container
-- Environment variables for sensitive data
-- Request timeouts to prevent resource exhaustion
-- Memory limits to prevent OOM issues
+- **Container Security**: Runs as non-root user
+- **Credential Management**: Environment variables for sensitive data
+- **Resource Protection**: Request timeouts and memory limits
+- **HTTPS Enforcement**: Cloud Run provides automatic TLS
+- **WebSocket Security**: Secure real-time connections for UI updates
 
 ## Cost Optimization
 

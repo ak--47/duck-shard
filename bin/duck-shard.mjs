@@ -93,7 +93,7 @@ function showHelp() {
     console.log('  npx duck-shard --server\n');
 
     console.log(chalk.white.bold('CLI MODE EXAMPLES:'));
-    console.log('  npx duck-shard ./data.parquet --format csv --output ./output/');
+    console.log('  npx duck-shard ./data.parquet --format csv --output ./out/');
     console.log('  npx duck-shard gs://bucket/data/ --format ndjson --sql ./transform.sql');
     console.log('  npx duck-shard ./data.json --jq ".user_id = (.user_id | tonumber)" --preview 10\n');
 
