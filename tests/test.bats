@@ -31,7 +31,7 @@ teardown() {
 }
 
 prune_test_data() {
-  for ext in csv ndjson parquet; do
+  for ext in csv ndjson parquet xml; do
     dir="$TEST_DATA_DIR/$ext"
     if [[ -d "$dir" ]]; then
       # delete any regular files that don't end with the right extension
@@ -237,6 +237,171 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     echo "Chunks found: $chunks_found"
     [ "$chunks_found" -ge 1 ]
     for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
+}
+
+##### ==== XML FORMAT TESTS ====
+
+@test "xml file > ndjson output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+@test "xml file > csv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+@test "xml dir > ndjson output for all files" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local xml_files=$(find "$TEST_DATA_DIR/xml" -name "*.xml" | wc -l)
+    local output_files=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
+    [ "$xml_files" -eq "$output_files" ]
+}
+
+@test "xml dir > merged single csv file" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" -s merged.csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged.csv"
+}
+
+@test "xml file > parquet output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local expected="$TEST_OUTPUT_DIR/$base.parquet"
+    run "$SCRIPT_PATH" "$in_file" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+@test "xml file with custom root element" {
+    teardown
+    # Create a test file with different root element
+    cat > "$TEST_OUTPUT_DIR/test-employees.xml" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<employees>
+  <employee>
+    <id>1</id>
+    <name>John Doe</name>
+    <department>Engineering</department>
+  </employee>
+  <employee>
+    <id>2</id>
+    <name>Jane Smith</name>
+    <department>Marketing</department>
+  </employee>
+</employees>
+EOF
+    local expected="$TEST_OUTPUT_DIR/test-employees.csv"
+    run "$SCRIPT_PATH" "$TEST_OUTPUT_DIR/test-employees.xml" --xml-root 'employees' -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it has 2 data rows plus header
+    local line_count=$(wc -l < "$expected")
+    [ "$line_count" -eq 3 ]
+}
+
+@test "xml file > csv with column selection" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    local columns="event,time,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Check header has only selected columns
+    local header=$(head -n 1 "$expected")
+    [[ "$header" == "event,time,user_id" ]]
+}
+
+@test "xml file > chunked csv with --rows" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    run "$SCRIPT_PATH" "$in_file" -f csv -r 100 -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.csv" | wc -l)
+    echo "Chunks found: $chunks_found"
+    [ "$chunks_found" -ge 1 ]
+    for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
+}
+
+# ./duck-shard.sh ./tests/testData/xml/part-1.xml -f json -o ./tmp
+@test "xml file > json output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local expected="$TEST_OUTPUT_DIR/$base.json"
+    run "$SCRIPT_PATH" "$in_file" -f json -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/xml --dedupe -f ndjson -o ./tmp
+@test "xml dir > ndjson with deduplication" {
+    teardown
+	run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" --dedupe -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local xml_files=$(find "$TEST_DATA_DIR/xml" -name "*.xml" | wc -l)
+    local output_files=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
+    [ "$xml_files" -eq "$output_files" ]
+}
+
+# ./duck-shard.sh ./tests/testData/xml/part-1.xml -c event,user_id --dedupe -f parquet -o ./tmp
+@test "xml file > parquet with column selection and deduplication" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/xml" "xml")
+    local base=$(basename "$in_file" .xml)
+    local columns="event,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" --dedupe -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.parquet"
+    file_exists_and_not_empty "$output_file"
+}
+
+# ./duck-shard.sh ./tests/testData/xml --rows 50 -f csv -o ./tmp
+@test "xml dir > chunked csv output for all files" {
+    teardown
+    # Ensure clean state
+    [ "$(find "$TEST_OUTPUT_DIR" -type f ! -name '.gitkeep' | wc -l)" -eq 0 ]
+
+	run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" --rows 50 -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+
+    # Count only the CSV files we just created (with specific pattern)
+    local csv_count=$(find "$TEST_OUTPUT_DIR" -name "part-*-*.csv" | wc -l)
+    echo "Found $csv_count chunked CSV files"
+    [ "$csv_count" -ge 5 ]  # Should create at least 5 chunks from 5 files
+}
+
+# ./duck-shard.sh ./tests/testData/xml -s merged_all.parquet -f parquet -o ./tmp
+@test "xml dir > merged single parquet file" {
+    teardown
+	run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" -s merged_all.parquet -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged_all.parquet"
+}
+
+# ./duck-shard.sh ./tests/testData/xml -s merged_cols.json -c event,user_id,amount -f json -o ./tmp
+@test "xml dir > merged json with column selection" {
+    teardown
+	run "$SCRIPT_PATH" "$TEST_DATA_DIR/xml" -s merged_cols.json -c "event,user_id,amount" -f json -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/merged_cols.json"
 }
 
 
@@ -578,6 +743,67 @@ teardown
     local in_file="$TEST_DATA_DIR/ndjson/part-1.ndjson"
     local out_gcs="gs://duck-shard/testData/writeHere/part-1.csv"
     run "$SCRIPT_PATH" "$in_file" -f csv -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+##### ==== XML GCS TESTS ====
+
+# ./duck-shard.sh tests/testData/xml/part-1.xml -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "local XML file > GCS ndjson output" {
+    teardown
+	[ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/xml/part-1.xml"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh tests/testData/xml/ -f parquet -o gs://duck-shard/testData/writeHere/
+@test "local XML dir > GCS parquet output for all files" {
+    teardown
+	[ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_dir="$TEST_DATA_DIR/xml"
+    run "$SCRIPT_PATH" "$in_dir" -f parquet -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"gs://duck-shard/testData/writeHere"* ]]
+}
+
+# ./duck-shard.sh tests/testData/xml/ -s merged-xml.csv -f csv -o gs://duck-shard/testData/writeHere/
+@test "local XML dir > GCS merged single csv file" {
+    teardown
+	[ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_dir="$TEST_DATA_DIR/xml"
+    local merged_gcs="gs://duck-shard/testData/writeHere/merged-xml.csv"
+    run "$SCRIPT_PATH" "$in_dir" -s merged-xml.csv -f csv -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$merged_gcs"* ]]
+}
+
+# ./duck-shard.sh tests/testData/xml/part-1.xml --xml-root 'root' -f csv -o gs://duck-shard/testData/writeHere/
+@test "local XML file with custom root > GCS csv output" {
+    teardown
+	[ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/xml/part-1.xml"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.csv"
+    run "$SCRIPT_PATH" "$in_file" --xml-root 'root' -f csv -o "gs://duck-shard/testData/writeHere/"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$out_gcs"* ]]
+}
+
+# ./duck-shard.sh tests/testData/xml/part-1.xml -c event,user_id -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "local XML file with column selection > GCS ndjson output" {
+    teardown
+	[ -n "$GCS_KEY_ID" ]
+    [ -n "$GCS_SECRET" ]
+    local in_file="$TEST_DATA_DIR/xml/part-1.xml"
+    local out_gcs="gs://duck-shard/testData/writeHere/part-1.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -c "event,user_id" -f ndjson -o "gs://duck-shard/testData/writeHere/"
     [ "$status" -eq 0 ]
     [[ "$output" == *"$out_gcs"* ]]
 }

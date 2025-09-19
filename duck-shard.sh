@@ -16,7 +16,7 @@ command -v duckdb >/dev/null 2>&1 || {
   exit 1
 }
 
-SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json"
+SUPPORTED_EXTENSIONS="parquet csv ndjson jsonl json xml"
 MAX_PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 SINGLE_FILE=false
 OUTPUT_FILENAME=""
@@ -42,6 +42,7 @@ JQ_EXPRESSION=""
 PREVIEW_ROWS=0
 FILE_PREFIX=""
 FILE_SUFFIX=""
+XML_ROOT="root"
 
 print_help() {
   cat <<EOF
@@ -58,7 +59,7 @@ Usage: $0 <input_path> [max_parallel_jobs] [options]
 
 Options:
   -s, --single-file [output_filename]   Merge into one output file (optional: filename or gs://...)
-  -f, --format <ndjson|parquet|csv>     Output format (default: ndjson)
+  -f, --format <ndjson|parquet|csv|xml> Output format (default: ndjson)
   -c, --cols <col1,col2,...>            Only include specific columns
   --dedupe                              Remove duplicate rows (by chosen columns)
   -o, --output <output_dir>             Output directory (local or gs://... or s3://...)
@@ -70,6 +71,7 @@ Options:
   --header <header>                     Add custom HTTP header (can be used multiple times)
   --log                                 Log HTTP responses to response-logs.json
   --jq <expression>                     Apply jq transformation to JSON output (requires json/ndjson/jsonl format)
+  --xml-root <element>                  XML root element name for parsing (default: root)
   --preview <N>                         Preview mode: process only first N rows (default 10), don't write files
   --prefix <prefix>                     Add prefix to output filenames
   --suffix <suffix>                     Add suffix to output filenames (before extension)
@@ -80,6 +82,8 @@ Options:
 Examples:
   $0 data/ -f csv -o ./out/
   $0 data/ -s merged.ndjson
+  $0 data/ -f xml -o ./converted/
+  $0 data.xml --xml-root 'records' -f csv -o ./out/
   $0 gs://bucket/data/ -f csv -o gs://other-bucket/output/
   $0 data/ --sql my_query.sql -f csv -o ./out/
   $0 data/ --url https://api.example.com/webhook --header "Authorization: Bearer token" -r 1000
@@ -130,6 +134,8 @@ while [[ $# -gt 0 ]]; do
     --log) LOG_RESPONSES=true; shift ;;
     --jq) [[ $# -ge 2 ]] || { echo "Error: --jq needs an argument"; exit 1; }
       JQ_EXPRESSION="$2"; shift 2 ;;
+    --xml-root) [[ $# -ge 2 ]] || { echo "Error: --xml-root needs an argument"; exit 1; }
+      XML_ROOT="$2"; shift 2 ;;
     --preview) PREVIEW_ROWS=10; shift
       if [[ $# -gt 0 && $1 =~ ^[0-9]+$ ]]; then PREVIEW_ROWS="$1"; shift; fi ;;
     --prefix) [[ $# -ge 2 ]] || { echo "Error: --prefix needs an argument"; exit 1; }
@@ -156,7 +162,7 @@ while [[ $# -gt 0 ]]; do
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done
-set -- "${POSITIONAL[@]}"
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
 
 export GCS_KEY_ID GCS_SECRET S3_KEY_ID S3_SECRET
 
@@ -210,9 +216,10 @@ if ! $ANALYTICAL_MODE; then
     ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
     parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
     csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
+    xml)     EXT="xml";     COPY_OPTS="FORMAT JSON" ;;
     jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
     "") echo "Error: --format must be specified or use --sql without --format for analytical mode"; exit 1 ;;
-    *) echo "Error: --format must be ndjson, parquet, json, or csv"; exit 1 ;;
+    *) echo "Error: --format must be ndjson, parquet, json, csv, or xml"; exit 1 ;;
   esac
 fi
 
@@ -278,8 +285,47 @@ get_duckdb_func() {
     parquet) echo "read_parquet" ;;
     csv)     echo "read_csv_auto" ;;
     ndjson|jsonl|json) echo "read_json_auto" ;;
+    xml)     echo "read_xml" ;;
     *) echo "Error: Unsupported extension: $ext" >&2; exit 1 ;;
   esac
+}
+
+build_duckdb_call() {
+  local func="$1"
+  local file_path="$2"
+  if [[ "$func" == "read_xml" ]]; then
+    # Use read_xml with proper configuration for complex XML structures
+    echo "read_xml('$file_path', root_element='$XML_ROOT', auto_detect=true, maximum_file_size=52428800, ignore_errors=true)"
+  else
+    echo "$func('$file_path')"
+  fi
+}
+
+build_duckdb_array_call() {
+  local func="$1"
+  local file_array="$2"
+  if [[ "$func" == "read_xml" ]]; then
+    # For XML arrays, read_xml doesn't support arrays, so we need to UNION individual calls
+    # file_array comes in as "ARRAY['file1','file2']" format, extract individual files
+    local files_str=$(echo "$file_array" | sed 's/ARRAY\[\(.*\)\]/\1/')
+    local files_list=""
+    local first=true
+
+    # Parse files from comma-separated list
+    echo "$files_str" | tr ',' '\n' | while read -r file; do
+      file=$(echo "$file" | sed "s/^'//" | sed "s/'$//")
+      if [[ -n "$file" ]]; then
+        if [[ "$first" == "true" ]]; then
+          echo "SELECT * FROM read_xml('$file', root_element='$XML_ROOT', auto_detect=true, maximum_file_size=52428800, ignore_errors=true)"
+          first=false
+        else
+          echo " UNION ALL SELECT * FROM read_xml('$file', root_element='$XML_ROOT', auto_detect=true, maximum_file_size=52428800, ignore_errors=true)"
+        fi
+      fi
+    done | tr -d '\n'
+  else
+    echo "$func($file_array)"
+  fi
 }
 
 cloud_secret_sql=""
@@ -288,7 +334,7 @@ load_cloud_creds() {
     echo "Using GCS_KEY_ID=$GCS_KEY_ID"
     echo "Using GCS_SECRET=$GCS_SECRET"
   fi
-  cloud_secret_sql="INSTALL httpfs; LOAD httpfs;"
+  cloud_secret_sql="INSTALL httpfs; LOAD httpfs; INSTALL webbed FROM community; LOAD webbed;"
   if [[ -n "$GCS_KEY_ID" && -n "$GCS_SECRET" ]]; then
     cloud_secret_sql="$cloud_secret_sql CREATE OR REPLACE SECRET gcs_creds (TYPE gcs, KEY_ID '$GCS_KEY_ID', SECRET '$GCS_SECRET');"
   fi
@@ -333,17 +379,17 @@ run_duckdb() {
 find_input_files() {
   local path="$1"
   if [[ "$path" =~ ^gs:// || "$path" =~ ^s3:// ]]; then
-    if [[ "$path" =~ \.(parquet|csv|ndjson|jsonl|json)$ ]]; then
+    if [[ "$path" =~ \.(parquet|csv|ndjson|jsonl|json|xml)$ ]]; then
       echo "$path"
     else
       # Use glob to find files in cloud storage
-      for ext in parquet csv ndjson jsonl json; do
+      for ext in parquet csv ndjson jsonl json xml; do
         run_duckdb "COPY (SELECT file FROM glob('${path%/}/*.$ext')) TO '/dev/stdout' (FORMAT CSV, HEADER false);" | \
           grep -E "^(gs|s3)://"
       done | sort
     fi
   else
-    find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' \) | sort
+    find "$path" -type f \( -iname '*.parquet' -o -iname '*.csv' -o -iname '*.ndjson' -o -iname '*.jsonl' -o -iname '*.json' -o -iname '*.xml' \) | sort
   fi
 }
 
@@ -493,15 +539,16 @@ preview_file() {
   local preview_rows="$2"
   local ext="${infile##*.}"
   local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+  local duckdb_call; duckdb_call=$(build_duckdb_call "$duckdb_func" "$infile")
 
   echo "🔍 Preview mode: showing first $preview_rows rows from $infile"
 
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
-    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt LIMIT $preview_rows ) TO '/dev/stdout' ($COPY_OPTS);"
+    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_call; COPY ( $sql_stmt LIMIT $preview_rows ) TO '/dev/stdout' ($COPY_OPTS);"
   else
     local sel; sel=$(dedupe_select_clause)
-    run_duckdb "COPY ($sel FROM $duckdb_func('$infile') LIMIT $preview_rows) TO '/dev/stdout' ($COPY_OPTS);"
+    run_duckdb "COPY ($sel FROM $duckdb_call LIMIT $preview_rows) TO '/dev/stdout' ($COPY_OPTS);"
   fi | {
     if [[ -n "$JQ_EXPRESSION" && "$FORMAT" =~ ^(ndjson|json|jsonl)$ ]]; then
       echo "🔄 Applying jq transformation: $JQ_EXPRESSION"
@@ -676,14 +723,15 @@ split_convert_file() {
   local infile="$1"
   local ext="${infile##*.}"
   local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+  local duckdb_call; duckdb_call=$(build_duckdb_call "$duckdb_func" "$infile")
   local outbase; outbase="$(output_base_name "$infile")"
   local row_count
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
-    row_count=$(run_duckdb "CREATE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); SELECT COUNT(*) FROM ( $sql_stmt );" | grep -Eo '[0-9]+' | tail -1)
+    row_count=$(run_duckdb "CREATE TEMP VIEW input_data AS SELECT * FROM $duckdb_call; SELECT COUNT(*) FROM ( $sql_stmt );" | grep -Eo '[0-9]+' | tail -1)
   else
     local sel; sel=$(dedupe_select_clause)
-    row_count=$(run_duckdb "SELECT COUNT(*) FROM $duckdb_func('$infile');" | grep -Eo '[0-9]+' | tail -1)
+    row_count=$(run_duckdb "SELECT COUNT(*) FROM $duckdb_call;" | grep -Eo '[0-9]+' | tail -1)
   fi
   local splits=$(( (row_count + ROWS_PER_FILE - 1) / ROWS_PER_FILE ))
   local i=1; local offset=0
@@ -705,11 +753,11 @@ split_convert_file() {
     echo "Converting $infile rows $((offset+1))-$((offset+ROWS_PER_FILE>row_count?row_count:offset+ROWS_PER_FILE)) → $out"
     if [[ -n "$SQL_FILE" ]]; then
       sql_stmt=$(get_sql_stmt "$SQL_FILE")
-      run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt LIMIT $ROWS_PER_FILE OFFSET $offset ) TO '$out' ($COPY_OPTS);"
+      run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_call; COPY ( $sql_stmt LIMIT $ROWS_PER_FILE OFFSET $offset ) TO '$out' ($COPY_OPTS);"
     else
       local sel; sel=$(dedupe_select_clause)
       run_duckdb "COPY (
-        $sel FROM $duckdb_func('$infile')
+        $sel FROM $duckdb_call
         LIMIT $ROWS_PER_FILE OFFSET $offset
       ) TO '$out' ($COPY_OPTS);"
     fi
@@ -740,6 +788,7 @@ convert_file() {
   local infile="$1"
   local ext="${infile##*.}"
   local duckdb_func; duckdb_func=$(get_duckdb_func "$ext")
+  local duckdb_call; duckdb_call=$(build_duckdb_call "$duckdb_func" "$infile")
   local outbase; outbase="$(output_base_name "$infile")"
   local out
   local filename=$(build_output_filename "$outbase" "$EXT")
@@ -758,10 +807,10 @@ convert_file() {
   echo "Converting $infile → $out"
   if [[ -n "$SQL_FILE" ]]; then
     sql_stmt=$(get_sql_stmt "$SQL_FILE")
-    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$infile'); COPY ( $sql_stmt ) TO '$out' ($COPY_OPTS);"
+    run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_call; COPY ( $sql_stmt ) TO '$out' ($COPY_OPTS);"
   else
     local sel; sel=$(dedupe_select_clause)
-    run_duckdb "COPY ($sel FROM $duckdb_func('$infile')) TO '$out' ($COPY_OPTS);"
+    run_duckdb "COPY ($sel FROM $duckdb_call) TO '$out' ($COPY_OPTS);"
   fi
   echo "✅ $out"
 
@@ -779,7 +828,7 @@ convert_file() {
   fi
 }
 
-export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file build_output_filename fix_glob_name
+export -f convert_file split_convert_file dedupe_select_clause select_clause get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file build_output_filename fix_glob_name build_duckdb_call build_duckdb_array_call
 
 load_cloud_creds
 
@@ -798,16 +847,23 @@ if $ANALYTICAL_MODE; then
     FILES=()
     while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(find_input_files "$INPUT_PATH")
     [[ ${#FILES[@]} -gt 0 ]] || { echo "No supported files found in $INPUT_PATH"; exit 1; }
-    
+
     # Use the first file's extension to determine the duckdb function
     first_ext="${FILES[0]##*.}"
     duckdb_func=$(get_duckdb_func "$first_ext")
     SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
-    VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func(ARRAY[$SQL_PATHS]);"
+    duckdb_array_call=$(build_duckdb_array_call "$duckdb_func" "ARRAY[$SQL_PATHS]")
+    if [[ "$duckdb_func" == "read_xml" ]]; then
+      # For XML, the array call returns a complete SELECT, wrap it properly
+      VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS $duckdb_array_call;"
+    else
+      VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_array_call;"
+    fi
   else
     ext="${INPUT_PATH##*.}"
     duckdb_func=$(get_duckdb_func "$ext")
-    VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func('$INPUT_PATH');"
+    duckdb_call=$(build_duckdb_call "$duckdb_func" "$INPUT_PATH")
+    VIEW_CREATION="CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_call;"
   fi
   
   # Get the SQL query
@@ -918,16 +974,33 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     [[ ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]] && [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
+      duckdb_array_call=$(build_duckdb_array_call "$duckdb_func" "ARRAY[$SQL_PATHS]")
       sql_stmt=$(get_sql_stmt "$SQL_FILE")
       echo "Merging ${#FILES[@]} files → $OUTPUT_FILENAME"
-      run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_func(ARRAY[$SQL_PATHS]); COPY ( $sql_stmt ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      if [[ "$duckdb_func" == "read_xml" ]]; then
+        run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS $duckdb_array_call; COPY ( $sql_stmt ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      else
+        run_duckdb "CREATE OR REPLACE TEMP VIEW input_data AS SELECT * FROM $duckdb_array_call; COPY ( $sql_stmt ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      fi
     else
       SEL=$(dedupe_select_clause)
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
+      duckdb_array_call=$(build_duckdb_array_call "$duckdb_func" "ARRAY[$SQL_PATHS]")
       echo "Merging ${#FILES[@]} files → $OUTPUT_FILENAME"
-      run_duckdb "COPY (
-        $SEL FROM $duckdb_func(ARRAY[$SQL_PATHS])
-      ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      if [[ "$duckdb_func" == "read_xml" ]]; then
+        # For XML, the array call returns a complete SELECT statement with UNION ALL
+        if [[ "$SEL" == "SELECT *" ]]; then
+          run_duckdb "COPY ( $duckdb_array_call ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+        else
+          # For column selection with XML, wrap the UNION in a subquery
+          run_duckdb "COPY ( $SEL FROM ( $duckdb_array_call ) ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+        fi
+      else
+        # For other formats, use the normal pattern
+        run_duckdb "COPY (
+          $SEL FROM $duckdb_array_call
+        ) TO '$OUTPUT_FILENAME' ($COPY_OPTS);"
+      fi
     fi
     echo "✅ Merged → $OUTPUT_FILENAME"
 
@@ -945,7 +1018,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX XML_ROOT
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"
@@ -955,7 +1028,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     echo -e "\n🎉 All individual conversions complete.\n"
   fi
 
-elif [[ -f "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3)://.+\.(parquet|csv|json|jsonl|ndjson)$ ]]; then
+elif [[ -f "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3)://.+\.(parquet|csv|json|jsonl|ndjson|xml)$ ]]; then
   # Handle preview mode for single file
   if (( PREVIEW_ROWS > 0 )); then
     preview_file "$INPUT_PATH" "$PREVIEW_ROWS"

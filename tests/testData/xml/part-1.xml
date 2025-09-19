@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <event>watch video</event>
+    <source>dm4</source>
+    <time>2025-05-17T13:30:29.447Z</time>
+    <insert_id>7548425a2fe4f1c8191a6c3100720e16</insert_id>
+    <user_id>74095758-00f8-556c-8f40-7bf65d8a5e50</user_id>
+    <videoCategory>music</videoCategory>
+    <amount>100</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>add to cart</event>
+    <source>dm4</source>
+    <time>2025-05-17T22:24:39.616Z</time>
+    <insert_id>8f4c15d806eb6724935594c462813ef9</insert_id>
+    <user_id>74095758-00f8-556c-8f40-7bf65d8a5e50</user_id>
+    <videoCategory>shopping</videoCategory>
+    <amount>382</amount>
+    <currency>EUR</currency>
+  </row>
+  <row>
+    <event>page view</event>
+    <source>dm4</source>
+    <time>2025-05-19T07:45:40.763Z</time>
+    <insert_id>36b7531d6901c0b75ff772f18c09a98d</insert_id>
+    <user_id>74095758-00f8-556c-8f40-7bf65d8a5e50</user_id>
+    <videoCategory>navigation</videoCategory>
+    <amount>50</amount>
+    <currency>GBP</currency>
+  </row>
+</root>

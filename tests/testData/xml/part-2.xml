@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <event>page view</event>
+    <source>dm4</source>
+    <time>2025-05-06T21:35:03.733Z</time>
+    <insert_id>b00129daf34a601fb04bef4cdfa1b510</insert_id>
+    <user_id>ee30e0be-b199-51c4-807c-952b5276ac1c</user_id>
+    <videoCategory>navigation</videoCategory>
+    <amount>200</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>checkout</event>
+    <source>dm4</source>
+    <time>2025-05-08T12:28:19.699Z</time>
+    <insert_id>6e6b72f35f7dc1f2f2b30091ff695f4b</insert_id>
+    <user_id>ee30e0be-b199-51c4-807c-952b5276ac1c</user_id>
+    <videoCategory>shopping</videoCategory>
+    <amount>105</amount>
+    <currency>ETH</currency>
+  </row>
+  <row>
+    <event>add to cart</event>
+    <source>dm4</source>
+    <time>2025-05-08T18:42:31.234Z</time>
+    <insert_id>a1b2c3d4e5f6789012345678901234ab</insert_id>
+    <user_id>11223344-5566-7788-9900-aabbccddeeff</user_id>
+    <videoCategory>music</videoCategory>
+    <amount>75</amount>
+    <currency>USD</currency>
+  </row>
+</root>

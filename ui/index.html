@@ -13,6 +13,8 @@
 	<link rel="stylesheet"
 		href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" />
 	<script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
+	<!-- Monaco Editor -->
+	<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 
 <body>
@@ -35,7 +37,7 @@
 			<!-- Input Data Section -->
 			<section class="card">
 				<h2 class="section-title">📁 Input Data</h2>
-				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, and JSON formats from local files or cloud storage.</p>
+				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, JSON, and XML formats from local files or cloud storage.</p>
 
 				<!-- Input Source Toggle -->
 				<div class="input-source-toggle">
@@ -146,12 +148,6 @@
 							value="api">
 						🚀 Stream to API
 					</label>
-					<label class="toggle-label">
-						<input type="radio"
-							name="outputMode"
-							value="preview">
-						👁️ Preview Only
-					</label>
 				</div>
 
 				<!-- File Output Options -->
@@ -163,6 +159,7 @@
 								<option value="ndjson">NDJSON (recommended)</option>
 								<option value="csv">CSV</option>
 								<option value="parquet">Parquet</option>
+								<option value="xml">XML</option>
 							</select>
 							<small>Format for output files</small>
 						</div>
@@ -171,9 +168,23 @@
 							<input type="text"
 								id="outputPath"
 								name="outputPath"
-								placeholder="./output/ or gs://bucket/output/"
+								placeholder="./out/ or gs://bucket/out/"
 								autocomplete="off">
 							<small>Where to save processed files (local or cloud)</small>
+						</div>
+					</div>
+
+					<!-- XML Configuration (conditional) -->
+					<div id="xml-config" class="form-row" style="display: none;">
+						<div class="form-group">
+							<label for="xmlRoot">XML Root Element</label>
+							<input type="text"
+								id="xmlRoot"
+								name="xmlRoot"
+								placeholder="root"
+								value="root"
+								autocomplete="off">
+							<small>Root element name for XML parsing (default: root)</small>
 						</div>
 					</div>
 
@@ -252,20 +263,6 @@
 					</div>
 				</div>
 
-				<!-- Preview Options -->
-				<div id="preview-output" class="output-section" style="display: none;">
-					<div class="form-group">
-						<label for="previewRows">Preview Rows</label>
-						<input type="number"
-							id="previewRows"
-							name="previewRows"
-							value="10"
-							min="1"
-							max="100"
-							autocomplete="off">
-						<small>Number of rows to preview (no files written)</small>
-					</div>
-				</div>
 			</section>
 
 			<!-- Cloud Storage Credentials Section -->
@@ -380,13 +377,13 @@
 						style="display: none;">
 						
 						<div class="form-group">
-							<label for="sqlFile">SQL Transformation File</label>
-							<input type="text"
-								id="sqlFile"
-								name="sqlFile"
-								placeholder="./transform.sql"
-								autocomplete="off">
-							<small>Path to SQL file for custom transformations</small>
+							<label>SQL Transformation</label>
+							<div id="sql-editor" style="height: 150px; border: 1px solid var(--border); border-radius: var(--border-radius); margin-top: 8px;"></div>
+							<textarea
+								id="sqlInline"
+								name="sqlInline"
+								style="display: none;"></textarea>
+							<small>Write SQL directly. Use <code>input_data</code> as your table name.</small>
 						</div>
 
 						<div class="form-group">

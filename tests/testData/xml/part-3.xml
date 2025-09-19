@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <event>page view</event>
+    <source>dm4</source>
+    <time>2025-05-18T12:38:29.190Z</time>
+    <insert_id>9d596f5905ecc0bf48ca822016e2bcfc</insert_id>
+    <user_id>3c5cf079-0b0d-59c1-a2b3-e66930fee44e</user_id>
+    <videoCategory>navigation</videoCategory>
+    <amount>300</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>click</event>
+    <source>dm4</source>
+    <time>2025-05-18T14:22:45.567Z</time>
+    <insert_id>f1e2d3c4b5a6789012345678901234ef</insert_id>
+    <user_id>99887766-5544-3322-1100-ffeeddccbbaa</user_id>
+    <videoCategory>entertainment</videoCategory>
+    <amount>120</amount>
+    <currency>EUR</currency>
+  </row>
+  <row>
+    <event>purchase</event>
+    <source>dm4</source>
+    <time>2025-05-18T16:55:12.890Z</time>
+    <insert_id>abcdef1234567890abcdef1234567890</insert_id>
+    <user_id>12345678-abcd-efgh-ijkl-1234567890ab</user_id>
+    <videoCategory>education</videoCategory>
+    <amount>450</amount>
+    <currency>GBP</currency>
+  </row>
+</root>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <event>save item</event>
+    <source>dm4</source>
+    <time>2025-05-05T02:35:15.132Z</time>
+    <insert_id>4e554d4d0eaaa6c0fe3407d77ad88477</insert_id>
+    <user_id>eb482ad5-a88f-5947-9aeb-3c16772488c7</user_id>
+    <videoCategory>shopping</videoCategory>
+    <amount>80</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>watch video</event>
+    <source>dm4</source>
+    <time>2025-05-05T08:15:22.445Z</time>
+    <insert_id>567890abcdef1234567890abcdef1234</insert_id>
+    <user_id>abcdef12-3456-7890-abcd-ef1234567890</user_id>
+    <videoCategory>entertainment</videoCategory>
+    <amount>0</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>share</event>
+    <source>dm4</source>
+    <time>2025-05-05T14:30:45.678Z</time>
+    <insert_id>fedcba0987654321fedcba0987654321</insert_id>
+    <user_id>98765432-1fed-cba0-9876-543210fedcba</user_id>
+    <videoCategory>social</videoCategory>
+    <amount>25</amount>
+    <currency>EUR</currency>
+  </row>
+</root>

@@ -13,51 +13,69 @@ No Python environments. No Spark clusters. No Docker containers. Just fast, reli
 Convert massive datasets between formats, apply SQL/jq transforms, stream to APIs. Built on DuckDB + bash + curl. Has a web UI. Stupid fast.
 
 ```bash
-# Install
-brew tap ak--47/tap && brew install duck-shard
+# Install and run
+npx duck-shard
 
-# Convert data
-duck-shard data.parquet -f csv -o ./clean/
-duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
-duck-shard --ui  # Web interface at localhost:8080
+# CLI usage
+npx duck-shard data.parquet -f csv -o ./clean/
+npx duck-shard events/ --sql transform.sql --url https://api.company.com/ingest
 ```
 
 ---
 
 ## Install
 
+### Option 1: npx (recommended)
+```bash
+npx duck-shard
+```
+No installation needed! Just run it. Dependencies are checked automatically.
+
+### Option 2: npm global install
+```bash
+npm install -g duck-shard
+duck-shard --ui
+```
+
+### Option 3: Homebrew (legacy - not recommended)
 ```bash
 brew tap ak--47/tap && brew install duck-shard
 ```
+*Note: Homebrew installation is deprecated. Use npx for the latest features.*
 
-That's it! Dependencies (DuckDB) are handled automatically.
-
-**Alternative**: Download directly
-```bash
-curl -O https://raw.githubusercontent.com/ak--47/duck-shard/main/duck-shard.sh && chmod +x duck-shard.sh
-# Requires: brew install duckdb jq
-```
+**Dependencies**: DuckDB and curl are required. jq is optional.
+- **macOS**: `brew install duckdb jq`
+- **Linux**: `apt-get install duckdb jq curl` or `yum install duckdb jq curl`
+- **Windows**: `winget install DuckDB.cli jqlang.jq`
 
 ## Quick Start
 
+### Web Interface (Recommended)
+```bash
+npx duck-shard          # Starts web UI at http://localhost:8080
+npx duck-shard --ui     # Same as above
+```
+
+### Command Line
 ```bash
 # Convert files
-duck-shard ./data/ --format csv --output ./processed/
+npx duck-shard ./data/ --format csv --output ./processed/
 
-# Web interface
-duck-shard --ui  # Open http://localhost:8080
+# Transform and stream to API
+npx duck-shard ./events.json --sql "SELECT * WHERE event='purchase'" --url https://api.company.com/ingest
 ```
 
 ---
 
 ## What it does
 
-**File conversion:** Parquet ↔ CSV ↔ NDJSON
+**File conversion:** Parquet ↔ CSV ↔ NDJSON ↔ XML ↔ JSON
 **SQL transforms:** Full DuckDB power on any file format
 **JSON transforms:** jq expressions for reshaping data
 **API streaming:** POST results directly to webhooks
 **Cloud storage:** Read/write GCS and S3 buckets
 **Column selection:** Pick specific fields, handle tricky names like `$email`
+**XML processing:** Custom root elements, auto-detection, complex structures
 **Progress bars:** See exactly what's happening during long operations
 
 ---
@@ -67,6 +85,15 @@ duck-shard --ui  # Open http://localhost:8080
 ```bash
 # Basic conversion
 duck-shard data/ -f csv -o ./output/
+
+# Convert XML to CSV with custom root element
+duck-shard data.xml --xml-root 'records' -f csv -o ./output/
+
+# Process XML with column selection and deduplication
+duck-shard employees.xml --xml-root 'employees' -c 'id,name,department' --dedupe -f ndjson -o ./clean/
+
+# XML from cloud storage with transformation
+duck-shard gs://bucket/events.xml --xml-root 'events' --sql ./transform.sql -f parquet -o ./processed/
 
 # Select specific columns (use single quotes for $ names)
 duck-shard data.json -f csv --cols 'user_id,$email,timestamp' -o ./clean/
@@ -91,6 +118,12 @@ duck-shard huge-file.parquet --preview 10 -f csv
 
 # Cloud storage
 duck-shard gs://my-bucket/data/ -f csv -o s3://other-bucket/results/
+
+# XML from cloud to local CSV with specific root
+duck-shard gs://bucket/data.xml --xml-root 'transactions' -f csv -o ./output/
+
+# Merge multiple XML files with custom naming
+duck-shard ./xml-files/ --xml-root 'records' --single-file --prefix 'merged_' --suffix '_clean' -f ndjson -o ./output/
 
 # Single file output with custom name
 duck-shard data/ --single-file -o ./merged-data.ndjson
@@ -129,6 +162,81 @@ ORDER BY month;
 ```
 
 Works with any file format - duck-shard handles the loading, you write the analysis.
+
+---
+
+## XML Processing
+
+duck-shard provides first-class XML support with automatic schema detection and configurable parsing:
+
+### Basic XML Processing
+```bash
+# Convert XML to any format
+duck-shard data.xml -f csv -o ./output/
+duck-shard events.xml -f ndjson -o ./processed/
+duck-shard records.xml -f parquet -o ./warehouse/
+```
+
+### Custom Root Elements
+By default, duck-shard expects XML with a `<root>` element. Use `--xml-root` to specify different structures:
+
+```bash
+# For XML with <employees> root
+duck-shard staff.xml --xml-root 'employees' -f csv -o ./hr/
+
+# For XML with <transactions> root
+duck-shard sales.xml --xml-root 'transactions' -f ndjson -o ./finance/
+```
+
+### XML Example Structure
+duck-shard works best with flat XML structures:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <id>1</id>
+    <name>John Doe</name>
+    <department>Engineering</department>
+    <salary>75000</salary>
+  </row>
+  <row>
+    <id>2</id>
+    <name>Jane Smith</name>
+    <department>Marketing</department>
+    <salary>68000</salary>
+  </row>
+</root>
+```
+
+### Advanced XML Operations
+```bash
+# Column selection with XML
+duck-shard employees.xml --xml-root 'staff' -c 'id,name,department' -f csv
+
+# Deduplication
+duck-shard events.xml --dedupe -f ndjson -o ./clean/
+
+# SQL transformations on XML
+duck-shard data.xml --sql ./transform.sql -f parquet -o ./processed/
+
+# Merge multiple XML files
+duck-shard ./xml-files/ --xml-root 'records' --single-file -o ./merged.ndjson
+
+# Stream XML to API with batching
+duck-shard events.xml --url https://api.company.com/ingest --rows 500
+```
+
+### Cloud Storage & XML
+```bash
+# Process XML from cloud storage
+duck-shard gs://bucket/data.xml --xml-root 'events' -f csv -o ./local/
+
+# Upload XML results to cloud
+duck-shard local.xml -f parquet -o gs://warehouse/processed/
+```
+
+XML processing uses DuckDB's webbed extension for robust parsing and automatic type inference.
 
 ---
 
@@ -171,7 +279,7 @@ duck-shard <input> [options]
 ```
 
 **Core:**
-- `-f, --format` - Output: `ndjson`, `csv`, `parquet`
+- `-f, --format` - Output: `ndjson`, `csv`, `parquet`, `xml`, `json`
 - `-o, --output` - Directory or file path (detects automatically in `--single-file` mode)
 - `-s, --single-file` - Merge all inputs into one output
 - `--cols` - Column selection: `'col1,$email,col3'` (use single quotes for $ names)
@@ -179,6 +287,11 @@ duck-shard <input> [options]
 - `--jq` - JSON transformation expression
 - `--preview` - Test on first N rows without writing files
 - `--verbose` - Show SQL commands and progress bars
+
+**XML Processing:**
+- `--xml-root` - XML root element name for parsing (default: 'root')
+- `--dedupe` - Remove duplicate rows (works with XML)
+- `--prefix/--suffix` - Add prefixes/suffixes to output filenames
 
 **API Streaming:**
 - `--url` - POST endpoint for results

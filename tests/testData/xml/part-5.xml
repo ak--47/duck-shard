@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <row>
+    <event>page view</event>
+    <source>dm4</source>
+    <time>2025-05-09T19:15:18.071Z</time>
+    <insert_id>3ec3d7dca04a6a626ab9c59e621310ce</insert_id>
+    <user_id>1ab92809-da79-5d8b-88de-f46ab4424ede</user_id>
+    <videoCategory>navigation</videoCategory>
+    <amount>150</amount>
+    <currency>USD</currency>
+  </row>
+  <row>
+    <event>download</event>
+    <source>dm4</source>
+    <time>2025-05-09T20:45:33.789Z</time>
+    <insert_id>123456789abcdef0123456789abcdef0</insert_id>
+    <user_id>fedcba09-8765-4321-fedc-ba0987654321</user_id>
+    <videoCategory>education</videoCategory>
+    <amount>99</amount>
+    <currency>CAD</currency>
+  </row>
+  <row>
+    <event>logout</event>
+    <source>dm4</source>
+    <time>2025-05-09T22:10:55.123Z</time>
+    <insert_id>987654321abcdef0987654321abcdef0</insert_id>
+    <user_id>11111111-2222-3333-4444-555555555555</user_id>
+    <videoCategory>system</videoCategory>
+    <amount>0</amount>
+    <currency>USD</currency>
+  </row>
+</root>

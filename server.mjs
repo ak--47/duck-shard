@@ -4,6 +4,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
+import fs from 'fs';
+import { checkDependencies, printInstallationInstructions } from './lib/check-dependencies.mjs';
+import { showMiniBanner } from './lib/banner.mjs';
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
@@ -17,12 +20,8 @@ const OPTIONAL_ENV_VARS = [
     'S3_SECRET'
 ];
 
+// Silently track missing env vars (don't spam console on startup)
 const missingVars = OPTIONAL_ENV_VARS.filter(k => !process.env[k]);
-if (missingVars.length > 0) {
-    console.warn('\nWARNING: Missing optional environment variables (cloud storage may not work):');
-    missingVars.forEach(v => console.warn('  - ' + v));
-    console.warn('These can be provided via request body or set as env vars.\n');
-}
 
 
 const app = express();
@@ -50,31 +49,31 @@ app.use(express.static(path.join(__dirname, 'ui')));
 // WebSocket connection handling
 wss.on('connection', (ws) => {
     console.log('WebSocket connection established');
-    
+
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            
+
             if (data.type === 'register-job' && data.jobId) {
                 // Register this WebSocket for the job
                 if (!jobConnections.has(data.jobId)) {
                     jobConnections.set(data.jobId, new Set());
                 }
                 jobConnections.get(data.jobId).add(ws);
-                
+
                 // Send confirmation
                 ws.send(JSON.stringify({
                     type: 'job-registered',
                     jobId: data.jobId
                 }));
-                
+
                 console.log(`WebSocket registered for job ${data.jobId}`);
             }
         } catch (error) {
             console.error('Error parsing WebSocket message:', error);
         }
     });
-    
+
     ws.on('close', () => {
         // Remove this WebSocket from all job connections
         for (const [jobId, connections] of jobConnections.entries()) {
@@ -115,7 +114,16 @@ function buildArgs(params) {
     if (params.dedupe)        args.push('--dedupe');
     if (params.output)        args.push('--output', params.output);
     if (params.rows)          args.push('--rows', String(params.rows));
-    if (params.sql)           args.push('--sql', params.sql);
+
+    // Handle inline SQL by creating a temporary file
+    if (params.sql_inline) {
+        const tmpFile = `./tmp/inline_sql_${Date.now()}.sql`;
+        fs.writeFileSync(tmpFile, params.sql_inline);
+        args.push('--sql', tmpFile);
+        params._temp_sql_file = tmpFile; // Store for cleanup later
+    } else if (params.sql) {
+        args.push('--sql', params.sql);
+    }
     if (params.gcs_key)       args.push('--gcs-key', params.gcs_key);
     if (params.gcs_secret)    args.push('--gcs-secret', params.gcs_secret);
     if (params.s3_key)        args.push('--s3-key', params.s3_key);
@@ -137,13 +145,13 @@ function buildArgs(params) {
 app.post('/run', async (req, res) => {
     const startTime = Date.now();
     let args;
-    
+
     try {
         args = buildArgs(req.body);
         console.log(`[${req.id}] Running duck-shard with args:`, args.join(' '));
     } catch (e) {
         console.error(`[${req.id}] Invalid arguments:`, e.message);
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: e.message,
             request_id: req.id,
             status: 'error'
@@ -151,9 +159,9 @@ app.post('/run', async (req, res) => {
     }
 
     const scriptPath = path.join(__dirname, 'duck-shard.sh');
-    
+
     // Build environment variables (prefer request body over env vars)
-    const envVars = { 
+    const envVars = {
         ...process.env,
         ...(req.body.gcs_key && { GCS_KEY_ID: req.body.gcs_key }),
         ...(req.body.gcs_secret && { GCS_SECRET: req.body.gcs_secret }),
@@ -175,18 +183,18 @@ app.post('/run', async (req, res) => {
         proc.kill('SIGTERM');
     }, CLOUD_RUN_TIMEOUT * 1000);
 
-    const proc = spawn('bash', [scriptPath, ...args], { 
+    const proc = spawn('bash', [scriptPath, ...args], {
         env: envVars,
         cwd: __dirname
     });
 
     let logs = '';
     let errorLogs = '';
-    
-    proc.stdout.on('data', data => { 
+
+    proc.stdout.on('data', data => {
         const output = data.toString();
         logs += output;
-        
+
         // Try to extract progress information for WebSocket updates
         try {
             // Look for progress indicators in the output
@@ -204,7 +212,7 @@ app.post('/run', async (req, res) => {
                         }
                     });
                 }
-                
+
                 // Look for other progress patterns
                 const recordMatch = line.match(/(\d+)\s+records?\s+processed/i);
                 if (recordMatch) {
@@ -219,15 +227,15 @@ app.post('/run', async (req, res) => {
         } catch (progressError) {
             // Ignore progress parsing errors
         }
-        
+
         // Stream large outputs to prevent memory issues
         if (logs.length > 1000000) { // 1MB
             console.log(`[${req.id}] Large output detected, truncating logs`);
             logs = logs.slice(-500000) + '\n... (truncated) ...\n';
         }
     });
-    
-    proc.stderr.on('data', data => { 
+
+    proc.stderr.on('data', data => {
         const output = data.toString();
         errorLogs += output;
         console.error(`[${req.id}] STDERR:`, output);
@@ -249,9 +257,19 @@ app.post('/run', async (req, res) => {
     proc.on('close', (code, signal) => {
         clearTimeout(timeoutHandle);
         const duration = Date.now() - startTime;
-        
+
+        // Clean up temporary SQL file if created
+        if (req.body._temp_sql_file) {
+            try {
+                fs.unlinkSync(req.body._temp_sql_file);
+                console.log(`[${req.id}] Cleaned up temporary SQL file: ${req.body._temp_sql_file}`);
+            } catch (error) {
+                console.warn(`[${req.id}] Failed to clean up temporary SQL file: ${error.message}`);
+            }
+        }
+
         console.log(`[${req.id}] Process completed with code ${code}, signal ${signal}, duration ${duration}ms`);
-        
+
         if (!res.headersSent) {
             const response = {
                 status: code === 0 ? 'success' : 'error',
@@ -263,7 +281,7 @@ app.post('/run', async (req, res) => {
                 duration,
                 timestamp: new Date().toISOString()
             };
-            
+
             // Send WebSocket completion message
             if (code === 0) {
                 broadcastToJob(req.id, {
@@ -276,7 +294,7 @@ app.post('/run', async (req, res) => {
                     error: errorLogs || 'Process failed with unknown error'
                 });
             }
-            
+
             res.json(response);
         }
     });
@@ -284,8 +302,8 @@ app.post('/run', async (req, res) => {
 
 // Health check endpoint for Cloud Run
 app.get('/health', (_, res) => {
-    res.status(200).json({ 
-        status: 'healthy', 
+    res.status(200).json({
+        status: 'healthy',
         timestamp: new Date().toISOString(),
         version: process.env.npm_package_version || '1.0.0'
     });
@@ -323,10 +341,36 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-server.listen(port, '0.0.0.0', () => {
-    console.log(`🦆 Duck Shard API running on port ${port}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Health check: http://localhost:${port}/health`);
-    console.log(`Web UI: http://localhost:${port}/`);
-    console.log(`WebSocket support enabled for real-time progress`);
+// Check dependencies before starting server
+async function startServer() {
+    // Only show banner if called directly (not from CLI wrapper)
+    if (process.argv[1].endsWith('server.mjs')) {
+        showMiniBanner();
+        console.log('Checking system dependencies...\n');
+    }
+
+    const { allPresent, results } = await checkDependencies(true); // Silent mode
+
+    if (!allPresent) {
+        printInstallationInstructions(results);
+        console.log('\n❌ Missing required dependencies. Please install them and restart the server.');
+        process.exit(1);
+    }
+
+    // Show cloud storage notice only if relevant
+    if (missingVars.length > 0) {
+        console.log(`💡 Cloud storage credentials can be provided via UI or environment variables.`);
+    }
+
+    server.listen(port, '0.0.0.0', () => {
+        console.log(`🦆 Duck Shard running on http://localhost:${port}`);
+        console.log(`📊 Web UI: http://localhost:${port}/`);
+        console.log(`❤️  Built by AK - Ready for data processing!\n`);
+    });
+}
+
+// Start the server
+startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
 });
