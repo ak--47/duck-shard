@@ -160,7 +160,6 @@ class DuckShardUI {
 			if (editorContainer) {
 				this.sqlEditor = monaco.editor.create(editorContainer, {
 					value: '',
-					placeholder: 'SELECT * FROM input_data WHERE event = \'purchase\' ORDER BY timestamp DESC',
 					language: 'sql',
 					theme: 'vs-dark',
 					minimap: { enabled: false },
@@ -286,12 +285,7 @@ class DuckShardUI {
 			}
 		}, 100);
 
-		// Set SQL in both Monaco Editor and hidden textarea
-		const sqlQuery = 'SELECT * FROM input_data WHERE event = \'page_view\' LIMIT 100';
-		document.getElementById('sqlInline').value = sqlQuery;
-		if (this.sqlEditor) {
-			this.sqlEditor.setValue(sqlQuery);
-		}
+		// Don't pre-populate SQL - let users write their own transforms
 
 		this.updateCLICommand();
 		console.log('Dev values filled with GCS public dataset');
@@ -420,9 +414,25 @@ class DuckShardUI {
 			previewBtn.innerHTML = '<span class="btn-icon">⏳</span> Loading...';
 			previewBtn.disabled = true;
 
-			// Collect form data for preview
-			const formData = this.collectFormData();
-			formData.preview = '10'; // Always preview 10 rows
+			// Build minimal form data for preview - NO TRANSFORMS
+			const formData = {
+				input_path: inputPath,
+				format: 'ndjson', // Always output as NDJSON for preview
+				preview: '5' // Just 5 rows for fast preview
+			};
+
+			// Add cloud credentials if needed
+			if (inputSource === 'gcs') {
+				const gcsKey = document.getElementById('gcsKey').value;
+				const gcsSecret = document.getElementById('gcsSecret').value;
+				if (gcsKey) formData.gcs_key = gcsKey;
+				if (gcsSecret) formData.gcs_secret = gcsSecret;
+			} else if (inputSource === 's3') {
+				const s3Key = document.getElementById('s3Key').value;
+				const s3Secret = document.getElementById('s3Secret').value;
+				if (s3Key) formData.s3_key = s3Key;
+				if (s3Secret) formData.s3_secret = s3Secret;
+			}
 
 			// Call the run endpoint with preview mode
 			const response = await fetch('/run', {
@@ -516,40 +526,104 @@ class DuckShardUI {
 			// Clear any previous results
 			this.clearResults();
 
-			// Show loading
-			this.showLoading(
-				isTest ? 'Running Test...' : 'Processing Data...',
-				isTest ? 'Processing sample data to test configuration' : 'Processing your data with duck-shard'
-			);
-
-			// Collect form data
-			const formData = this.collectFormData();
 			if (isTest) {
-				formData.preview = '10'; // Test with 10 rows
-			}
-
-			// Submit to run endpoint
-			const response = await fetch('/run', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify(formData)
-			});
-
-			const result = await response.json();
-
-			if (result.status === 'success') {
-				this.hideLoading();
-				this.showResults(result, isTest);
+				// For test runs, show before/after
+				await this.runTestWithBeforeAfter();
 			} else {
-				this.hideLoading();
-				this.showError(`${isTest ? 'Test' : 'Processing'} failed: ${result.error || result.error_logs}`);
+				// Show loading
+				this.showLoading(
+					'Processing Data...',
+					'Processing your data with duck-shard'
+				);
+
+				// Collect form data
+				const formData = this.collectFormData();
+
+				// Submit to run endpoint
+				const response = await fetch('/run', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify(formData)
+				});
+
+				const result = await response.json();
+
+				if (result.status === 'success') {
+					this.hideLoading();
+					this.showResults(result, false);
+				} else {
+					this.hideLoading();
+					this.showError(`Processing failed: ${result.error || result.error_logs}`);
+				}
 			}
 
 		} catch (error) {
 			this.hideLoading();
 			this.showError(`Network error: ${error.message}`);
+		}
+	}
+
+	async runTestWithBeforeAfter() {
+		// Show loading
+		this.showLoading(
+			'Running Test...',
+			'Processing sample data to test configuration'
+		);
+
+		const inputSource = document.querySelector('input[name="inputSource"]:checked').value;
+		const inputPath = this.getInputPath();
+
+		try {
+			// Step 1: Get "before" data (raw, no transforms)
+			const beforeData = {
+				input_path: inputPath,
+				format: 'ndjson',
+				preview: '5'
+			};
+
+			// Add cloud credentials if needed
+			if (inputSource === 'gcs') {
+				const gcsKey = document.getElementById('gcsKey').value;
+				const gcsSecret = document.getElementById('gcsSecret').value;
+				if (gcsKey) beforeData.gcs_key = gcsKey;
+				if (gcsSecret) beforeData.gcs_secret = gcsSecret;
+			} else if (inputSource === 's3') {
+				const s3Key = document.getElementById('s3Key').value;
+				const s3Secret = document.getElementById('s3Secret').value;
+				if (s3Key) beforeData.s3_key = s3Key;
+				if (s3Secret) beforeData.s3_secret = s3Secret;
+			}
+
+			const beforeResponse = await fetch('/run', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(beforeData)
+			});
+
+			const beforeResult = await beforeResponse.json();
+
+			// Step 2: Get "after" data (with all transforms)
+			const afterData = this.collectFormData();
+			afterData.preview = '10'; // Test with 10 rows
+
+			const afterResponse = await fetch('/run', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(afterData)
+			});
+
+			const afterResult = await afterResponse.json();
+
+			this.hideLoading();
+
+			// Show both results
+			this.showTestResults(beforeResult, afterResult);
+
+		} catch (error) {
+			this.hideLoading();
+			this.showError(`Test failed: ${error.message}`);
 		}
 	}
 
@@ -855,6 +929,59 @@ class DuckShardUI {
 		resultsSection.scrollIntoView({ behavior: 'smooth' });
 	}
 
+	showTestResults(beforeResult, afterResult) {
+		const resultsSection = document.getElementById('results');
+		const resultsTitle = document.getElementById('results-title');
+		const resultsData = document.getElementById('results-data');
+
+		resultsTitle.textContent = 'Test Results: Before & After';
+
+		// Extract JSON from both results
+		const beforeData = this.extractJSONFromLogs(beforeResult.logs || '');
+		const afterData = this.extractJSONFromLogs(afterResult.logs || '');
+
+		let beforeDisplay = 'No data available';
+		let afterDisplay = 'No data available';
+
+		if (beforeData.length > 0) {
+			beforeDisplay = JSON.stringify(beforeData, null, 2);
+		}
+
+		if (afterData.length > 0) {
+			afterDisplay = JSON.stringify(afterData, null, 2);
+		}
+
+		resultsData.innerHTML = `
+			<div class="test-results">
+				<div class="before-section">
+					<h3>📥 Before (Raw Data)</h3>
+					<pre><code>${this.escapeHtml(beforeDisplay)}</code></pre>
+				</div>
+				<div class="after-section">
+					<h3>📤 After (Transformed)</h3>
+					<pre><code>${this.escapeHtml(afterDisplay)}</code></pre>
+				</div>
+			</div>
+		`;
+
+		resultsSection.style.display = 'block';
+		resultsSection.scrollIntoView({ behavior: 'smooth' });
+	}
+
+	extractJSONFromLogs(logs) {
+		const lines = logs.split('\n');
+		const jsonLines = lines.filter(line => {
+			try {
+				JSON.parse(line.trim());
+				return true;
+			} catch {
+				return false;
+			}
+		});
+
+		return jsonLines.slice(0, 5).map(line => JSON.parse(line.trim()));
+	}
+
 	showError(message) {
 		// Remove existing error messages
 		const existingErrors = document.querySelectorAll('.error');
@@ -863,21 +990,32 @@ class DuckShardUI {
 		// Create new error message
 		const errorDiv = document.createElement('div');
 		errorDiv.className = 'error';
-		errorDiv.textContent = message;
+		errorDiv.innerHTML = `
+			<div class="error-content">
+				<span class="error-message">${this.escapeHtml(message)}</span>
+				<button class="error-dismiss" aria-label="Dismiss error">×</button>
+			</div>
+		`;
 
 		// Insert after header
 		const header = document.querySelector('.header');
 		header.parentNode.insertBefore(errorDiv, header.nextSibling);
 
+		// Add click handler for dismiss button
+		const dismissBtn = errorDiv.querySelector('.error-dismiss');
+		dismissBtn.addEventListener('click', () => {
+			errorDiv.remove();
+		});
+
 		// Scroll to error
 		errorDiv.scrollIntoView({ behavior: 'smooth' });
 
-		// Auto-remove after 5 seconds
+		// Auto-remove after 15 seconds (increased from 5)
 		setTimeout(() => {
 			if (errorDiv.parentNode) {
 				errorDiv.remove();
 			}
-		}, 5000);
+		}, 15000);
 	}
 
 	escapeHtml(text) {

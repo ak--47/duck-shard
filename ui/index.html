@@ -33,7 +33,7 @@
 		<!-- Main Form -->
 		<form id="duckShardForm"
 			class="duck-shard-form">
-			
+
 			<!-- Input Data Section -->
 			<section class="card">
 				<h2 class="section-title">📁 Input Data</h2>
@@ -156,7 +156,7 @@
 						<div class="form-group">
 							<label for="outputFormat">Output Format</label>
 							<select id="outputFormat" name="outputFormat">
-								<option value="ndjson">NDJSON (recommended)</option>
+								<option value="ndjson">NDJSON</option>
 								<option value="csv">CSV</option>
 								<option value="parquet">Parquet</option>
 								<option value="xml">XML</option>
@@ -375,13 +375,14 @@
 					<div id="transform-section"
 						class="collapsible-content"
 						style="display: none;">
-						
+
 						<div class="form-group">
 							<label>SQL Transformation</label>
 							<div id="sql-editor" style="height: 150px; border: 1px solid var(--border); border-radius: var(--border-radius); margin-top: 8px;"></div>
 							<textarea
 								id="sqlInline"
 								name="sqlInline"
+								placeholder="SELECT * FROM input_data WHERE event = 'purchase' ORDER BY timestamp DESC"
 								style="display: none;"></textarea>
 							<small>Write SQL directly. Use <code>input_data</code> as your table name.</small>
 						</div>

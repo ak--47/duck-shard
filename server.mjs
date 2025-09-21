@@ -112,11 +112,24 @@ function buildArgs(params) {
     if (params.single_file)   args.push('--single-file', typeof params.single_file === 'string' ? params.single_file : '');
     if (params.cols)          args.push('--cols', params.cols);
     if (params.dedupe)        args.push('--dedupe');
-    if (params.output)        args.push('--output', params.output);
+    if (params.output) {
+        // Ensure output directory exists (but only if it's a local path)
+        if (!params.output.startsWith('gs://') && !params.output.startsWith('s3://')) {
+            const outputDir = path.dirname(params.output);
+            if (outputDir && outputDir !== '.' && !fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir, { recursive: true });
+            }
+        }
+        args.push('--output', params.output);
+    }
     if (params.rows)          args.push('--rows', String(params.rows));
 
     // Handle inline SQL by creating a temporary file
     if (params.sql_inline) {
+        // Ensure tmp directory exists
+        if (!fs.existsSync('./tmp')) {
+            fs.mkdirSync('./tmp', { recursive: true });
+        }
         const tmpFile = `./tmp/inline_sql_${Date.now()}.sql`;
         fs.writeFileSync(tmpFile, params.sql_inline);
         args.push('--sql', tmpFile);
@@ -237,8 +250,17 @@ app.post('/run', async (req, res) => {
 
     proc.stderr.on('data', data => {
         const output = data.toString();
-        errorLogs += output;
-        console.error(`[${req.id}] STDERR:`, output);
+
+        // Filter out benign preview mode warnings
+        const isPreviewWarning = output.includes('Warning: --preview mode specified - no files will be written to disk');
+
+        if (!isPreviewWarning) {
+            errorLogs += output;
+            console.error(`[${req.id}] STDERR:`, output);
+        } else {
+            // Log the warning but don't treat it as an error
+            console.log(`[${req.id}] Preview mode warning (filtered):`, output.trim());
+        }
     });
 
     proc.on('error', (error) => {
