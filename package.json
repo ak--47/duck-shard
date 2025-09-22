@@ -14,7 +14,7 @@
     "test": "bats tests/test.bats",
     "deploy": "./deploy.sh",
     "health": "curl -f http://localhost:${PORT:-8080}/health || exit 1",
-	"post": "npm run publish"
+	"post": "npm publish"
   },
   "keywords": [
     "duck-shard",
