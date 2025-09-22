@@ -31,11 +31,19 @@ teardown() {
 }
 
 prune_test_data() {
-  for ext in csv ndjson parquet xml; do
+  for ext in csv tsv ndjson parquet xml; do
+    # Clean uncompressed directories
     dir="$TEST_DATA_DIR/$ext"
     if [[ -d "$dir" ]]; then
       # delete any regular files that don't end with the right extension
       find "$dir" -maxdepth 1 -type f ! -name "*.${ext}" -delete || true
+    fi
+
+    # Clean gzip compressed directories
+    gz_dir="$TEST_DATA_DIR/$ext-gz"
+    if [[ -d "$gz_dir" ]]; then
+      # delete any regular files that don't end with the right extension (compressed)
+      find "$gz_dir" -maxdepth 1 -type f ! -name "*.${ext}.gz" -delete || true
     fi
   done
 }
@@ -63,6 +71,8 @@ count_lines() { wc -l < "$1"; }
 file_exists_and_not_empty() { [[ -f "$1" && -s "$1" ]]; }
 get_first_file() { find "$1" -type f -name "*.$2" | head -1; }
 count_files() { find "$1" -type f -name "*.$2" | wc -l; }
+get_first_file_gz() { find "$1" -type f -name "*.$2.gz" | head -1; }
+count_files_gz() { find "$1" -type f -name "*.$2.gz" | wc -l; }
 
 
 ##### ==== HELP AND BASIC SANITY TESTS ====
@@ -185,6 +195,226 @@ count_files() { find "$1" -type f -name "*.$2" | wc -l; }
     local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson" | wc -l)
     [ "$chunks_found" -ge 1 ]
     for f in "$TEST_OUTPUT_DIR"/${base}-*.ndjson; do file_exists_and_not_empty "$f"; done
+}
+
+##### ==== TSV INPUT ====
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -f csv -o ./tmp
+@test "tsv file > csv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ , ]]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv -f csv -o ./tmp
+@test "tsv dir > csv output for all files" {
+    teardown
+	local original_count=$(count_files "$TEST_DATA_DIR/tsv" "tsv")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/tsv" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local csv_count=$(find "$TEST_OUTPUT_DIR" -name "*.csv" | wc -l)
+    [ "$csv_count" -eq "$original_count" ]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -f ndjson -o ./tmp
+@test "tsv file > ndjson output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/tsv -f ndjson -o ./tmp
+@test "tsv dir > ndjson output for all files" {
+    teardown
+	local original_count=$(count_files "$TEST_DATA_DIR/tsv" "tsv")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/tsv" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local ndjson_count=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson" | wc -l)
+    [ "$ndjson_count" -eq "$original_count" ]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -f tsv -o ./tmp
+@test "tsv file > tsv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local expected="$TEST_OUTPUT_DIR/$base.tsv"
+    run "$SCRIPT_PATH" "$in_file" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ $'\t' ]]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv -s merged.tsv -f tsv -o ./tmp
+@test "tsv dir > merged single tsv file" {
+    teardown
+	cd "$TEST_OUTPUT_DIR"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/tsv" -s all.tsv -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "all.tsv"
+    run head -1 "all.tsv"
+    [[ "$output" =~ $'\t' ]]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv --rows 1000 -f csv -o ./tmp
+@test "tsv file > chunked csv with --rows" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local chunk_size=1000
+    run "$SCRIPT_PATH" "$in_file" --rows "$chunk_size" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.csv" | wc -l)
+    [ "$chunks_found" -ge 1 ]
+    for f in "$TEST_OUTPUT_DIR"/${base}-*.csv; do file_exists_and_not_empty "$f"; done
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -c event,time,user_id -f csv -o ./tmp
+@test "tsv file > csv with column selection" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local columns="event,time,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.csv"
+    file_exists_and_not_empty "$output_file"
+    run head -1 "$output_file"
+    [[ "$output" =~ event ]]
+    [[ "$output" =~ time ]]
+    [[ "$output" =~ user_id ]]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv --dedupe -f csv -o ./tmp
+@test "tsv file > csv with deduplication" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    run "$SCRIPT_PATH" "$in_file" --dedupe -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.csv"
+    file_exists_and_not_empty "$output_file"
+}
+
+##### ==== GZIP COMPRESSED FILES TESTS ====
+
+# ./duck-shard.sh ./tests/testData/csv-gz/part-1.csv.gz -f ndjson -o ./tmp
+@test "gzip csv file > ndjson output" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/csv-gz" "csv")
+    local base=$(basename "$in_file" .csv.gz)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/tsv-gz/part-1.tsv.gz -f csv -o ./tmp
+@test "gzip tsv file > csv output" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/tsv-gz" "tsv")
+    local base=$(basename "$in_file" .tsv.gz)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ , ]]
+}
+
+# NOTE: Parquet.gz files are not recommended - Parquet has internal compression
+# See: https://duckdb.org/docs/data/parquet/overview.html#compression
+# Outer gzip breaks random access and parallelism
+
+# ./duck-shard.sh ./tests/testData/ndjson-gz/part-1.ndjson.gz -f parquet -o ./tmp
+@test "gzip ndjson file > parquet output" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/ndjson-gz" "ndjson")
+    local base=$(basename "$in_file" .ndjson.gz)
+    local expected="$TEST_OUTPUT_DIR/$base.parquet"
+    run "$SCRIPT_PATH" "$in_file" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/xml-gz/part-1.xml.gz -f csv -o ./tmp
+@test "gzip xml file > csv output" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/xml-gz" "xml")
+    local base=$(basename "$in_file" .xml.gz)
+    local expected="$TEST_OUTPUT_DIR/$base.csv"
+    run "$SCRIPT_PATH" "$in_file" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/csv-gz -f tsv -o ./tmp
+@test "gzip csv dir > tsv output for all files" {
+    teardown
+	local original_count=$(count_files_gz "$TEST_DATA_DIR/csv-gz" "csv")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/csv-gz" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local tsv_count=$(find "$TEST_OUTPUT_DIR" -name "*.tsv" | wc -l)
+    [ "$tsv_count" -eq "$original_count" ]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv-gz -s merged.csv -f csv -o ./tmp
+@test "gzip tsv dir > merged single csv file" {
+    teardown
+	cd "$TEST_OUTPUT_DIR"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/tsv-gz" -s all.csv -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "all.csv"
+    run head -1 "all.csv"
+    [[ "$output" =~ , ]]
+}
+
+# NOTE: Parquet.gz files are not recommended - Parquet has internal compression
+# See: https://duckdb.org/docs/data/parquet/overview.html#compression
+# Outer gzip breaks random access and parallelism
+
+# ./duck-shard.sh ./tests/testData/csv-gz/part-1.csv.gz -c event,time,user_id -f parquet -o ./tmp
+@test "gzip csv file > parquet with column selection" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/csv-gz" "csv")
+    local base=$(basename "$in_file" .csv.gz)
+    local columns="event,time,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.parquet"
+    file_exists_and_not_empty "$output_file"
+}
+
+# ./duck-shard.sh ./tests/testData/tsv-gz/part-1.tsv.gz --dedupe -f ndjson -o ./tmp
+@test "gzip tsv file > ndjson with deduplication" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/tsv-gz" "tsv")
+    local base=$(basename "$in_file" .tsv.gz)
+    run "$SCRIPT_PATH" "$in_file" --dedupe -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.ndjson"
+    file_exists_and_not_empty "$output_file"
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson-gz/part-1.ndjson.gz --preview 3
+@test "gzip ndjson file preview mode" {
+    teardown
+	local in_file=$(get_first_file_gz "$TEST_DATA_DIR/ndjson-gz" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --preview 3
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Preview mode" ]]
+    [[ "$output" =~ "✅ Preview complete" ]]
 }
 
 ##### ==== NDJSON INPUT ====
@@ -977,6 +1207,56 @@ teardown
     file_exists_and_not_empty "$expected"
 }
 
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -f parquet -o ./tmp
+@test "tsv file > parquet output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local expected="$TEST_OUTPUT_DIR/$base.parquet"
+    run "$SCRIPT_PATH" "$in_file" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -f tsv -o ./tmp
+@test "parquet file > tsv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.tsv"
+    run "$SCRIPT_PATH" "$in_file" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ $'\t' ]]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv -f tsv -o ./tmp
+@test "csv file > tsv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.tsv"
+    run "$SCRIPT_PATH" "$in_file" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ $'\t' ]]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson -f tsv -o ./tmp
+@test "ndjson file > tsv output" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.tsv"
+    run "$SCRIPT_PATH" "$in_file" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    run head -1 "$expected"
+    [[ "$output" =~ $'\t' ]]
+}
+
 # ./duck-shard.sh ./tests/testData/ndjson -f parquet -o ./tmp
 @test "ndjson dir > parquet output for all files" {
     teardown
@@ -1041,6 +1321,34 @@ teardown
     file_exists_and_not_empty "$output_file"
 }
 
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv -c event,time,user_id -f parquet -o ./tmp
+@test "tsv file > parquet with column selection" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local columns="event,time,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.parquet"
+    file_exists_and_not_empty "$output_file"
+}
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet -c event,user_id -f tsv -o ./tmp
+@test "parquet file > tsv with column selection" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local columns="event,user_id"
+    run "$SCRIPT_PATH" "$in_file" -c "$columns" -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_file="$TEST_OUTPUT_DIR/$base.tsv"
+    file_exists_and_not_empty "$output_file"
+    run head -1 "$output_file"
+    [[ "$output" =~ event ]]
+    [[ "$output" =~ user_id ]]
+    [[ "$output" =~ $'\t' ]]
+}
+
 ##### ==== DEDUPLICATION TESTS ====
 
 # ./duck-shard.sh ./tests/testData/csv/part-1.csv --dedupe -f ndjson -o ./tmp
@@ -1073,6 +1381,16 @@ teardown
     file_exists_and_not_empty "$TEST_OUTPUT_DIR/dedupe_all.parquet"
 }
 
+# ./duck-shard.sh ./tests/testData/tsv -s dedupe_all.tsv --dedupe -f tsv -o ./tmp
+@test "tsv dir > merged tsv with deduplication" {
+    teardown
+	run "$SCRIPT_PATH" "$TEST_DATA_DIR/tsv" -s dedupe_all.tsv --dedupe -f tsv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/dedupe_all.tsv"
+    run head -1 "$TEST_OUTPUT_DIR/dedupe_all.tsv"
+    [[ "$output" =~ $'\t' ]]
+}
+
 ##### ==== CHUNKING TESTS ====
 
 # ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --rows 500 -f csv -o ./tmp
@@ -1094,6 +1412,18 @@ teardown
 	local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
     local base=$(basename "$in_file" .csv)
     local chunk_size=250
+    run "$SCRIPT_PATH" "$in_file" --rows "$chunk_size" -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.parquet" | wc -l)
+    [ "$chunks_found" -ge 1 ]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv --rows 300 -f parquet -o ./tmp
+@test "tsv file > chunked parquet with 300 rows" {
+    teardown
+	local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local chunk_size=300
     run "$SCRIPT_PATH" "$in_file" --rows "$chunk_size" -f parquet -o "$TEST_OUTPUT_DIR"
     [ "$status" -eq 0 ]
     local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.parquet" | wc -l)

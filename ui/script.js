@@ -259,6 +259,9 @@ class DuckShardUI {
 
 		// Initialize first header row event listeners
 		this.setupHeaderRowEvents();
+
+		// SQL template buttons
+		this.setupSQLTemplateEvents();
 	}
 
 	fillDevValues() {
@@ -270,7 +273,7 @@ class DuckShardUI {
 
 		// Set GCS path to public dataset
 		document.getElementById('gcsPath').value = 'gs://mixpanel-import-public-data/example-dnd-events.json';
-		document.getElementById('outputFormat').value = 'ndjson';
+		document.getElementById('outputFormat').value = 'tsv';
 		document.getElementById('outputPath').value = './out/';
 
 		// Select file output mode (default)
@@ -328,16 +331,20 @@ class DuckShardUI {
 		const outputMode = document.querySelector('input[name="outputMode"]:checked').value;
 		const fileOutput = document.getElementById('file-output');
 		const apiOutput = document.getElementById('api-output');
+		const analyticalOutput = document.getElementById('analytical-output');
 
 		// Hide all output sections first
 		fileOutput.style.display = 'none';
 		apiOutput.style.display = 'none';
+		analyticalOutput.style.display = 'none';
 
 		// Show the selected output section
 		if (outputMode === 'file') {
 			fileOutput.style.display = 'block';
 		} else if (outputMode === 'api') {
 			apiOutput.style.display = 'block';
+		} else if (outputMode === 'analytical') {
+			analyticalOutput.style.display = 'block';
 		}
 
 		this.updateCLICommand();
@@ -395,6 +402,47 @@ class DuckShardUI {
 		document.querySelectorAll('.header-name, .header-value').forEach(input => {
 			input.addEventListener('input', this.updateCLICommand.bind(this));
 		});
+	}
+
+	setupSQLTemplateEvents() {
+		// Add event listeners to SQL template buttons
+		document.querySelectorAll('.sql-template-btn').forEach(btn => {
+			btn.addEventListener('click', () => {
+				const template = btn.getAttribute('data-template');
+				this.applySQLTemplate(template);
+			});
+		});
+	}
+
+	applySQLTemplate(template) {
+		let sql = '';
+
+		switch (template) {
+			case 'count':
+				sql = 'SELECT COUNT(*) as row_count FROM input_data;';
+				break;
+			case 'distinct':
+				sql = 'SELECT column_name, COUNT(*) as count\nFROM input_data\nGROUP BY column_name\nORDER BY count DESC;';
+				break;
+			case 'summary':
+				sql = 'SELECT \n  COUNT(*) as total_rows,\n  COUNT(DISTINCT column_name) as unique_values,\n  MIN(column_name) as min_value,\n  MAX(column_name) as max_value\nFROM input_data;';
+				break;
+			case 'group':
+				sql = 'SELECT \n  column_name,\n  COUNT(*) as count,\n  AVG(numeric_column) as avg_value\nFROM input_data\nGROUP BY column_name\nORDER BY count DESC;';
+				break;
+			case 'filter':
+				sql = 'SELECT *\nFROM input_data\nWHERE column_name = \'value\'\nORDER BY timestamp DESC\nLIMIT 100;';
+				break;
+		}
+
+		// Set SQL in Monaco Editor if available, otherwise fallback to textarea
+		if (this.sqlEditor) {
+			this.sqlEditor.setValue(sql);
+		} else {
+			document.getElementById('sqlInline').value = sql;
+		}
+
+		this.updateCLICommand();
 	}
 
 	async previewData() {
@@ -521,6 +569,13 @@ class DuckShardUI {
 					this.showError('Please specify an API URL for streaming mode.');
 					return;
 				}
+			} else if (outputMode === 'analytical') {
+				const sqlInline = document.getElementById('sqlInline').value.trim();
+				if (!sqlInline) {
+					this.showError('Please write an SQL query for analytical mode.');
+					return;
+				}
+				// Output path is optional for analytical mode - defaults to current directory
 			}
 
 			// Clear any previous results
@@ -815,6 +870,14 @@ class DuckShardUI {
 				headers.forEach(header => {
 					command += ` --header "${header}"`;
 				});
+			} else if (outputMode === 'analytical') {
+				// Analytical mode - no --format flag, requires --sql
+				const analyticalOutputPath = document.getElementById('analyticalOutputPath').value.trim();
+				if (analyticalOutputPath) {
+					command += ` --output "${analyticalOutputPath}"`;
+				}
+
+				// SQL is required for analytical mode - will be added later in the function
 			}
 
 			// Cloud credentials
@@ -1009,13 +1072,6 @@ class DuckShardUI {
 
 		// Scroll to error
 		errorDiv.scrollIntoView({ behavior: 'smooth' });
-
-		// Auto-remove after 15 seconds (increased from 5)
-		setTimeout(() => {
-			if (errorDiv.parentNode) {
-				errorDiv.remove();
-			}
-		}, 15000);
 	}
 
 	escapeHtml(text) {

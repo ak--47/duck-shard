@@ -13,3 +13,4 @@ tests/response-logs.json
 todos.txt
 node_modules
 CLAUDE.md
+query_result.csv

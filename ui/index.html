@@ -27,7 +27,7 @@
 				<span id="brand-description">Universal Data Pipeline</span>
 			</h1>
 			<p class="subtitle">Convert, transform, and stream data with zero DevOps overhead</p>
-			<button type="button" id="dev-key-btn" class="dev-key-btn" title="Fill form with GCS public dataset example">🔑</button>
+			<button type="button" id="dev-key-btn" class="dev-key-btn" title="Demo: Convert JSON to TSV using GCS public dataset">🔑</button>
 		</header>
 
 		<!-- Main Form -->
@@ -37,7 +37,7 @@
 			<!-- Input Data Section -->
 			<section class="card">
 				<h2 class="section-title">📁 Input Data</h2>
-				<p class="section-description">Choose your data source. Supports Parquet, CSV, NDJSON, JSON, and XML formats from local files or cloud storage.</p>
+				<p class="section-description">Choose your data source. Supports Parquet, CSV, TSV, NDJSON, JSON, and XML formats from local files or cloud storage.</p>
 
 				<!-- Input Source Toggle -->
 				<div class="input-source-toggle">
@@ -148,6 +148,12 @@
 							value="api">
 						🚀 Stream to API
 					</label>
+					<label class="toggle-label">
+						<input type="radio"
+							name="outputMode"
+							value="analytical">
+						📊 Analytical Mode
+					</label>
 				</div>
 
 				<!-- File Output Options -->
@@ -158,6 +164,7 @@
 							<select id="outputFormat" name="outputFormat">
 								<option value="ndjson">NDJSON</option>
 								<option value="csv">CSV</option>
+								<option value="tsv">TSV</option>
 								<option value="parquet">Parquet</option>
 								<option value="xml">XML</option>
 							</select>
@@ -260,6 +267,49 @@
 							</label>
 							<small>Save responses to response-logs.json</small>
 						</div>
+					</div>
+				</div>
+
+				<!-- Analytical Mode Options -->
+				<div id="analytical-output" class="output-section" style="display: none;">
+					<p class="section-description">Analytical mode runs SQL queries and displays results in the terminal while saving a CSV file.</p>
+
+					<div class="form-group">
+						<label for="analyticalOutputPath">Results Directory</label>
+						<input type="text"
+							id="analyticalOutputPath"
+							name="analyticalOutputPath"
+							placeholder="./results/ or gs://bucket/analysis/"
+							autocomplete="off">
+						<small>Directory to save query results CSV file</small>
+					</div>
+
+					<!-- SQL Templates -->
+					<div class="sql-templates">
+						<label>Quick SQL Templates</label>
+						<div class="template-buttons">
+							<button type="button" class="btn btn-ghost btn-sm sql-template-btn" data-template="count">
+								<span class="btn-icon">🔢</span>
+								Count Rows
+							</button>
+							<button type="button" class="btn btn-ghost btn-sm sql-template-btn" data-template="distinct">
+								<span class="btn-icon">🔍</span>
+								Distinct Values
+							</button>
+							<button type="button" class="btn btn-ghost btn-sm sql-template-btn" data-template="summary">
+								<span class="btn-icon">📈</span>
+								Summary Stats
+							</button>
+							<button type="button" class="btn btn-ghost btn-sm sql-template-btn" data-template="group">
+								<span class="btn-icon">📊</span>
+								Group By
+							</button>
+							<button type="button" class="btn btn-ghost btn-sm sql-template-btn" data-template="filter">
+								<span class="btn-icon">🔎</span>
+								Filter Data
+							</button>
+						</div>
+						<small>Click templates to populate SQL editor with common analysis queries</small>
 					</div>
 				</div>
 
