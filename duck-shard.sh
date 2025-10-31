@@ -326,6 +326,9 @@ build_duckdb_call() {
   elif [[ "$func" == "read_csv" ]]; then
     # For TSV files, use read_csv with tab delimiter
     echo "read_csv('$file_path', delim='\t')"
+  elif [[ "$func" == "read_json_auto" ]]; then
+    # Use read_json_auto with robust error handling for schema variations
+    echo "read_json_auto('$file_path', ignore_errors=true, union_by_name=true, maximum_depth=-1)"
   else
     echo "$func('$file_path')"
   fi
@@ -370,6 +373,9 @@ build_duckdb_array_call() {
         fi
       fi
     done | tr -d '\n'
+  elif [[ "$func" == "read_json_auto" ]]; then
+    # For JSON arrays, add robust error handling for schema variations
+    echo "$func($file_array, ignore_errors=true, union_by_name=true, maximum_depth=-1)"
   else
     echo "$func($file_array)"
   fi
