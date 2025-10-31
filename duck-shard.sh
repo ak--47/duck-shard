@@ -305,7 +305,14 @@ get_duckdb_func() {
     csv)     echo "read_csv_auto" ;;
     tsv)     echo "read_csv" ;;
     ndjson|jsonl|json) echo "read_json_auto" ;;
-    xml)     echo "read_xml" ;;
+    xml)
+      if ! $XML_SUPPORTED; then
+        echo "Error: XML file detected, but webbed extension is unavailable for this platform" >&2
+        echo "XML files cannot be processed without the webbed extension" >&2
+        exit 1
+      fi
+      echo "read_xml"
+      ;;
     *) echo "Error: Unsupported extension: $ext" >&2; exit 1 ;;
   esac
 }
@@ -369,12 +376,30 @@ build_duckdb_array_call() {
 }
 
 cloud_secret_sql=""
+XML_SUPPORTED=false
+
 load_cloud_creds() {
   if $VERBOSE; then
     echo "Using GCS_KEY_ID=$GCS_KEY_ID"
     echo "Using GCS_SECRET=$GCS_SECRET"
   fi
-  cloud_secret_sql="INSTALL httpfs; LOAD httpfs; INSTALL webbed FROM community; LOAD webbed;"
+
+  # Always install httpfs for cloud storage support
+  cloud_secret_sql="INSTALL httpfs; LOAD httpfs;"
+
+  # Try to install webbed for XML support, but don't fail if unavailable
+  if duckdb -c "INSTALL webbed FROM community; LOAD webbed;" 2>/dev/null; then
+    cloud_secret_sql="$cloud_secret_sql INSTALL webbed FROM community; LOAD webbed;"
+    XML_SUPPORTED=true
+    if $VERBOSE; then
+      echo "✓ XML support enabled (webbed extension loaded)"
+    fi
+  else
+    if $VERBOSE; then
+      echo "⚠ XML support disabled (webbed extension unavailable for this platform)"
+    fi
+  fi
+
   if [[ -n "$GCS_KEY_ID" && -n "$GCS_SECRET" ]]; then
     cloud_secret_sql="$cloud_secret_sql CREATE OR REPLACE SECRET gcs_creds (TYPE gcs, KEY_ID '$GCS_KEY_ID', SECRET '$GCS_SECRET');"
   fi
@@ -894,6 +919,27 @@ convert_file() {
 export -f convert_file split_convert_file dedupe_select_clause select_clause get_file_format get_duckdb_func output_base_name get_sql_stmt run_duckdb check_output_safety to_abs post_file_to_url log_http_response apply_jq_transform preview_file build_output_filename fix_glob_name build_duckdb_call build_duckdb_array_call
 
 load_cloud_creds
+
+# Validate XML support before proceeding
+if ! $XML_SUPPORTED; then
+  # Check if user requested XML output format
+  if [[ "$FORMAT" == "xml" ]]; then
+    echo "Error: XML output format requested, but webbed extension is unavailable for this platform" >&2
+    echo "Please choose a different output format: ndjson, parquet, csv, tsv, or json" >&2
+    exit 1
+  fi
+
+  # Check if input contains XML files
+  if [[ -f "$INPUT_PATH" && "$INPUT_PATH" =~ \.xml(\.(gz|bz2|xz|zst))?$ ]]; then
+    echo "Error: XML input file detected, but webbed extension is unavailable for this platform" >&2
+    echo "XML files cannot be processed without the webbed extension" >&2
+    exit 1
+  elif [[ -d "$INPUT_PATH" ]] || [[ "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
+    # For directories or cloud paths, we'll check during file discovery
+    # This will be caught by get_duckdb_func if XML files are found
+    :
+  fi
+fi
 
 if $ANALYTICAL_MODE; then
   echo -e "\n🦆  DUCK SHARD ANALYTICAL QUERY\n📊 sql_file=$SQL_FILE  output_dir=${OUTPUT_DIR}  prefix=${FILE_PREFIX:-}  suffix=${FILE_SUFFIX:-}\n"

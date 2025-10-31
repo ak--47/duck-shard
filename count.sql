@@ -1,0 +1,1 @@
+SELECT COUNT(*) as row_count FROM input_data;
