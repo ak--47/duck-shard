@@ -717,6 +717,10 @@ class DuckShardUI {
 			if (document.getElementById('singleFile').checked) {
 				formData.single_file = true;
 			}
+
+			if (document.getElementById('compressed').checked) {
+				formData.compressed = true;
+			}
 		} else if (outputMode === 'api') {
 			formData.url = document.getElementById('apiUrl').value;
 			formData.format = 'ndjson'; // API streaming uses NDJSON
@@ -849,6 +853,10 @@ class DuckShardUI {
 
 				if (document.getElementById('singleFile').checked) {
 					command += ` --single-file`;
+				}
+
+				if (document.getElementById('compressed').checked) {
+					command += ` --compressed`;
 				}
 			} else if (outputMode === 'api') {
 				const apiUrl = document.getElementById('apiUrl').value.trim();

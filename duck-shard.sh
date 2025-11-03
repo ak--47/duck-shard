@@ -27,6 +27,7 @@ SELECT_COLUMNS="*"
 DEDUPE=false
 OUTPUT_DIR=""
 ROWS_PER_FILE=0
+COMPRESSED=false
 GCS_KEY_ID="${GCS_KEY_ID:-}"
 GCS_SECRET="${GCS_SECRET:-}"
 S3_KEY_ID="${S3_KEY_ID:-}"
@@ -63,6 +64,7 @@ Options:
   -f, --format <ndjson|parquet|csv|tsv|xml> Output format (default: ndjson)
   -c, --cols <col1,col2,...>            Only include specific columns
   --dedupe                              Remove duplicate rows (by chosen columns)
+  --compressed                          Write gzip-compressed output files (adds .gz extension)
   -o, --output <output_dir>             Output directory (local or gs://... or s3://...)
   -r, --rows <rows_per_file>            Split output files with N rows each (not for --single-file)
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
@@ -84,6 +86,7 @@ Examples:
   $0 data/ -f csv -o ./out/
   $0 data/ -f tsv -o ./out/
   $0 data.csv.gz -f parquet -o ./out/      # Gzip compressed files auto-detected
+  $0 data/ -f parquet --compressed -o ./out/  # Output compressed parquet.gz files
   $0 data.tsv.gz --preview 5               # Preview compressed TSV files
   $0 data/ -s merged.ndjson
   $0 data/ -f xml -o ./converted/
@@ -115,6 +118,7 @@ while [[ $# -gt 0 ]]; do
       [[ -z "$SELECT_COLUMNS" ]] && SELECT_COLUMNS="*"
       shift 2 ;;
     --dedupe) DEDUPE=true; shift ;;
+    --compressed) COMPRESSED=true; shift ;;
     -o|--output) [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
       OUTPUT_DIR="$2"; shift 2 ;;
     -r|--rows) [[ $# -ge 2 ]] || { echo "Error: --rows needs an integer argument"; exit 1; }
@@ -226,6 +230,11 @@ if ! $ANALYTICAL_MODE; then
     "") echo "Error: --format must be specified or use --sql without --format for analytical mode"; exit 1 ;;
     *) echo "Error: --format must be ndjson, parquet, json, csv, tsv, or xml"; exit 1 ;;
   esac
+
+  # Add compression if requested
+  if $COMPRESSED; then
+    COPY_OPTS="$COPY_OPTS, COMPRESSION GZIP"
+  fi
 fi
 
 # Validation for --jq usage
@@ -526,6 +535,9 @@ build_output_filename() {
   local base_name="$1"
   local extension="$2"
   local filename="${FILE_PREFIX}${base_name}${FILE_SUFFIX}.${extension}"
+  if $COMPRESSED; then
+    filename="${filename}.gz"
+  fi
   echo "$filename"
 }
 
@@ -1086,6 +1098,12 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
       # Apply the default output directory when filename is relative
       OUTPUT_FILENAME="${default_output_dir%/}/${OUTPUT_FILENAME}"
     fi
+
+    # Add .gz extension if compression is enabled and not already present
+    if $COMPRESSED && [[ ! "$OUTPUT_FILENAME" =~ \.gz$ ]]; then
+      OUTPUT_FILENAME="${OUTPUT_FILENAME}.gz"
+    fi
+
     [[ ! "$OUTPUT_FILENAME" =~ ^(gs|s3):// ]] && [[ -f "$OUTPUT_FILENAME" ]] && rm -f "$OUTPUT_FILENAME"
     if [[ -n "$SQL_FILE" ]]; then
       SQL_PATHS=$(for f in "${FILES[@]}"; do printf "'%s'," "$f"; done); SQL_PATHS=${SQL_PATHS%,}
@@ -1133,7 +1151,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX XML_ROOT
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX XML_ROOT COMPRESSED
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"

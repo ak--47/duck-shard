@@ -2191,6 +2191,281 @@ teardown
     [[ "$output" =~ "Error: --suffix needs an argument" ]]
 }
 
+##### ==== COMPRESSION TESTS ====
+
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --compressed -f csv -o ./tmp
+@test "compression: parquet to compressed csv" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's actually gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify we can decompress and read content
+    run bash -c "gzip -dc '$expected' | head -1"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ , ]]  # CSV should have commas
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --compressed -f ndjson -o ./tmp
+@test "compression: csv to compressed ndjson" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's actually gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify we can decompress and read JSON content
+    run bash -c "gzip -dc '$expected' | head -1 | jq -e '.'"
+    [ "$status" -eq 0 ]
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --compressed -f parquet -o ./tmp
+@test "compression: ndjson to compressed parquet" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.parquet.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Parquet files use internal compression, not external gzip
+    # Verify it's a valid Parquet file
+    run file "$expected"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Parquet" ]]
+}
+
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv --compressed -f csv -o ./tmp
+@test "compression: tsv to compressed csv" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    local base=$(basename "$in_file" .tsv)
+    local expected="$TEST_OUTPUT_DIR/$base.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's actually gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify TSV was converted to CSV properly
+    run bash -c "gzip -dc '$expected' | head -1"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ , ]]  # Should have commas (CSV format)
+    [[ ! "$output" =~ $'\t' ]]  # Should not have tabs
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --compressed -s merged.csv -f csv -o ./tmp
+@test "compression: single file merge with compression" {
+    teardown
+    local expected="$TEST_OUTPUT_DIR/merged.csv.gz"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --compressed -s merged.csv -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's actually gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify merged content
+    local uncompressed_lines=$(gzip -dc "$expected" | wc -l)
+    [ "$uncompressed_lines" -gt 1 ]  # Should have header + data
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --compressed --rows 500 -f ndjson -o ./tmp
+@test "compression: chunked output with compression" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    run "$SCRIPT_PATH" "$in_file" --compressed --rows 500 -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Check that chunk files were created with .gz extension
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson.gz" | wc -l)
+    [ "$chunks_found" -gt 0 ]
+    # Verify first chunk is gzipped
+    local first_chunk=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson.gz" | head -1)
+    file_exists_and_not_empty "$first_chunk"
+    run gzip -t "$first_chunk"
+    [ "$status" -eq 0 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --compressed --cols "event,user_id" -f csv -o ./tmp
+@test "compression: with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/$base.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed --cols "event,user_id" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify only selected columns are present
+    run bash -c "gzip -dc '$expected' | head -1"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "event" ]]
+    [[ "$output" =~ "user_id" ]]
+    [[ ! "$output" =~ "source" ]]  # This column should not be present
+}
+
+# ./duck-shard.sh ./tests/testData/ndjson --compressed --dedupe -f csv -o ./tmp
+@test "compression: with deduplication" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed --dedupe -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+}
+
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --compressed --sql ./tests/ex-query.sql -f ndjson -o ./tmp
+@test "compression: with SQL transformation" {
+    teardown
+    # Create SQL file for testing
+    local sql_file="$TEST_OUTPUT_DIR/test.sql"
+    echo "SELECT * FROM input_data WHERE event IS NOT NULL LIMIT 100" > "$sql_file"
+
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed --sql "$sql_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify we got limited results
+    local line_count=$(gzip -dc "$expected" | wc -l)
+    [ "$line_count" -le 100 ]
+}
+
+# ./duck-shard.sh ./tests/testData/parquet --compressed --prefix "test_" --suffix "_final" -f csv -o ./tmp
+@test "compression: with prefix and suffix" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local expected="$TEST_OUTPUT_DIR/test_${base}_final.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed --prefix "test_" --suffix "_final" -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+}
+
+# Test compressed input to compressed output
+# ./duck-shard.sh ./tests/testData/csv-gz/part-1.csv.gz --compressed -f parquet -o ./tmp
+@test "compression: gzipped input to compressed output" {
+    teardown
+    # First create a gzipped input file if it doesn't exist
+    local src_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local gz_dir="$TEST_DATA_DIR/csv-gz"
+    mkdir -p "$gz_dir"
+    local gz_file="$gz_dir/$(basename "$src_file").gz"
+    if [[ ! -f "$gz_file" ]]; then
+        gzip -c "$src_file" > "$gz_file"
+    fi
+
+    local base=$(basename "$gz_file" .csv.gz)
+    local expected="$TEST_OUTPUT_DIR/$base.parquet.gz"
+    run "$SCRIPT_PATH" "$gz_file" --compressed -f parquet -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Parquet files use internal compression, verify it's a valid Parquet file
+    run file "$expected"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Parquet" ]]
+}
+
+# Test directory processing with compression
+# ./duck-shard.sh ./tests/testData/parquet --compressed -f csv -o ./tmp
+@test "compression: directory processing with compression" {
+    teardown
+    local original_count=$(count_files "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/parquet" --compressed -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local gz_count=$(find "$TEST_OUTPUT_DIR" -name "*.csv.gz" | wc -l)
+    [ "$gz_count" -eq "$original_count" ]
+    # Verify first file is gzipped
+    local first_gz=$(find "$TEST_OUTPUT_DIR" -name "*.csv.gz" | head -1)
+    file_exists_and_not_empty "$first_gz"
+    run gzip -t "$first_gz"
+    [ "$status" -eq 0 ]
+}
+
+# Test cloud storage (if credentials available)
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --compressed -f ndjson -o gs://duck-shard/testData/writeHere/
+@test "compression: cloud storage output with compression" {
+    teardown
+    # Skip test if no GCS credentials
+    if [[ -z "${GCS_KEY_ID:-}" || -z "${GCS_SECRET:-}" ]]; then
+        skip "Skipping cloud storage test - no GCS credentials"
+    fi
+
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    local base=$(basename "$in_file" .parquet)
+    local cloud_path="gs://duck-shard/testData/writeHere/compressed-test-${base}.ndjson.gz"
+
+    run "$SCRIPT_PATH" "$in_file" --compressed -f ndjson -o "gs://duck-shard/testData/writeHere/" \
+        --gcs-key "$GCS_KEY_ID" --gcs-secret "$GCS_SECRET"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ".gz" ]]  # Output should mention .gz file
+}
+
+# Test that CSV/TSV/NDJSON produce actual gzip files vs Parquet internal compression
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --compressed -f csv -o ./tmp
+@test "compression: CSV format produces actual gzip file" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    local base=$(basename "$in_file" .csv)
+    local expected="$TEST_OUTPUT_DIR/${base}.csv.gz"
+    run "$SCRIPT_PATH" "$in_file" --compressed -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # CSV should produce actual gzip files
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify file type shows gzip
+    run file "$expected"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "gzip" ]]
+}
+
+# Test help text mentions compression
+# ./duck-shard.sh --help
+@test "compression: help text mentions --compressed option" {
+    teardown
+    run "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--compressed" ]]
+    [[ "$output" =~ "gzip" ]]
+}
+
+# Test compression works with preview mode (should not create files)
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --compressed --preview 5 -f ndjson
+@test "compression: preview mode with compression (no files created)" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --compressed --preview 5 -f ndjson
+    [ "$status" -eq 0 ]
+    # Verify no files were created
+    local gz_count=$(find "$TEST_OUTPUT_DIR" -name "*.ndjson.gz" 2>/dev/null | wc -l)
+    [ "$gz_count" -eq 0 ]
+    # But output should still show preview data
+    [[ "$output" =~ "Preview" ]]
+}
+
 ##### ==== CLEANUP ====
 
 # Global cleanup to remove test data from GCS writeHere directory

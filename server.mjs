@@ -112,6 +112,7 @@ function buildArgs(params) {
     if (params.single_file)   args.push('--single-file', typeof params.single_file === 'string' ? params.single_file : '');
     if (params.cols)          args.push('--cols', params.cols);
     if (params.dedupe)        args.push('--dedupe');
+    if (params.compressed)    args.push('--compressed');
     if (params.output) {
         // Ensure output directory exists (but only if it's a local path)
         if (!params.output.startsWith('gs://') && !params.output.startsWith('s3://')) {
