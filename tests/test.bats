@@ -2466,6 +2466,148 @@ teardown
     [[ "$output" =~ "Preview" ]]
 }
 
+##### ==== FAST MODE TESTS ====
+
+# Test basic fast mode with NDJSON
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode -f ndjson -o ./tmp
+@test "fast mode: NDJSON to NDJSON conversion" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson"
+    run "$SCRIPT_PATH" "$in_file" --fast-mode -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify output is valid JSON
+    run bash -c "head -1 '$expected' | jq -e '.'"
+    [ "$status" -eq 0 ]
+}
+
+# Test fast mode with row splitting
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --rows 500 -f ndjson -o ./tmp
+@test "fast mode: with row splitting" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --rows 500 -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # Check that chunk files were created
+    local chunks_found=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson" | wc -l)
+    [ "$chunks_found" -gt 0 ]
+    # Verify first chunk has valid JSON
+    local first_chunk=$(find "$TEST_OUTPUT_DIR" -name "${base}-*.ndjson" | head -1)
+    file_exists_and_not_empty "$first_chunk"
+    run bash -c "head -1 '$first_chunk' | jq -e '.'"
+    [ "$status" -eq 0 ]
+}
+
+# Test fast mode with directory processing
+# ./duck-shard.sh ./tests/testData/ndjson --fast-mode -f ndjson -o ./tmp
+@test "fast mode: directory processing" {
+    teardown
+    local original_count=$(count_files "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --fast-mode -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    local output_count=$(count_files "$TEST_OUTPUT_DIR" "ndjson")
+    [ "$output_count" -eq "$original_count" ]
+}
+
+# Test fast mode with single file merge
+# ./duck-shard.sh ./tests/testData/ndjson --fast-mode -s merged.ndjson -f ndjson -o ./tmp
+@test "fast mode: single file merge" {
+    teardown
+    local expected="$TEST_OUTPUT_DIR/merged.ndjson"
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --fast-mode -s merged.ndjson -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify output has multiple JSON lines
+    local line_count=$(wc -l < "$expected")
+    [ "$line_count" -gt 1 ]
+    # Verify each line is valid JSON
+    run bash -c "head -2 '$expected' | jq -e '.'"
+    [ "$status" -eq 0 ]
+}
+
+# Test fast mode with compression
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --compressed -f ndjson -o ./tmp
+@test "fast mode: with compression" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local base=$(basename "$in_file" .ndjson)
+    local expected="$TEST_OUTPUT_DIR/$base.ndjson.gz"
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --compressed -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$expected"
+    # Verify it's gzipped
+    run gzip -t "$expected"
+    [ "$status" -eq 0 ]
+    # Verify decompressed content is valid JSON
+    run bash -c "gzip -dc '$expected' | head -1 | jq -e '.'"
+    [ "$status" -eq 0 ]
+}
+
+# Test fast mode validation errors
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode -f csv -o ./tmp
+@test "fast mode: error with non-JSON output format" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --fast-mode -f csv -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --fast-mode can only be used when output format is ndjson/jsonl/json" ]]
+}
+
+# Test fast mode cannot be used with column selection
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --cols "event,user_id" -f ndjson -o ./tmp
+@test "fast mode: error with column selection" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --cols "event,user_id" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --fast-mode cannot be used with column selection" ]]
+}
+
+# Test fast mode cannot be used with dedupe
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --dedupe -f ndjson -o ./tmp
+@test "fast mode: error with dedupe" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --dedupe -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --fast-mode cannot be used with --dedupe" ]]
+}
+
+# Test fast mode cannot be used with SQL
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --sql ./tests/ex-query.sql -f ndjson -o ./tmp
+@test "fast mode: error with SQL transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local sql_file="$TEST_OUTPUT_DIR/test.sql"
+    echo "SELECT * FROM input_data LIMIT 10" > "$sql_file"
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --sql "$sql_file" -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --fast-mode cannot be used with SQL transformations" ]]
+}
+
+# Test fast mode cannot be used with jq
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --jq '.event' -f ndjson -o ./tmp
+@test "fast mode: error with jq transformation" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --jq '.event' -f ndjson -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Error: --fast-mode cannot be used with jq transformations" ]]
+}
+
+# Test fast mode help text
+# ./duck-shard.sh --help
+@test "fast mode: help text mentions --fast-mode option" {
+    teardown
+    run "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--fast-mode" ]]
+    [[ "$output" =~ "Skip JSON parsing" ]]
+}
+
 ##### ==== CLEANUP ====
 
 # Global cleanup to remove test data from GCS writeHere directory

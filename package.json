@@ -1,6 +1,6 @@
 {
   "name": "duck-shard",
-  "version": "1.1.03",
+  "version": "1.1.04",
   "description": "Universal Data Pipeline - DuckDB ETL tool with web UI and jq transformations",
   "type": "module",
   "main": "server.mjs",

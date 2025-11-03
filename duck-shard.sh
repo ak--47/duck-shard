@@ -28,6 +28,7 @@ DEDUPE=false
 OUTPUT_DIR=""
 ROWS_PER_FILE=0
 COMPRESSED=false
+FAST_MODE=false
 GCS_KEY_ID="${GCS_KEY_ID:-}"
 GCS_SECRET="${GCS_SECRET:-}"
 S3_KEY_ID="${S3_KEY_ID:-}"
@@ -65,6 +66,7 @@ Options:
   -c, --cols <col1,col2,...>            Only include specific columns
   --dedupe                              Remove duplicate rows (by chosen columns)
   --compressed                          Write gzip-compressed output files (adds .gz extension)
+  --fast-mode                           Skip JSON parsing for NDJSON→NDJSON operations (much faster for splitting)
   -o, --output <output_dir>             Output directory (local or gs://... or s3://...)
   -r, --rows <rows_per_file>            Split output files with N rows each (not for --single-file)
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
@@ -119,6 +121,7 @@ while [[ $# -gt 0 ]]; do
       shift 2 ;;
     --dedupe) DEDUPE=true; shift ;;
     --compressed) COMPRESSED=true; shift ;;
+    --fast-mode) FAST_MODE=true; shift ;;
     -o|--output) [[ $# -ge 2 ]] || { echo "Error: --output needs an argument"; exit 1; }
       OUTPUT_DIR="$2"; shift 2 ;;
     -r|--rows) [[ $# -ge 2 ]] || { echo "Error: --rows needs an integer argument"; exit 1; }
@@ -221,12 +224,28 @@ fi
 # Set format-specific variables (skip in analytical mode)
 if ! $ANALYTICAL_MODE; then
   case "$FORMAT" in
-    ndjson)  EXT="ndjson";  COPY_OPTS="FORMAT JSON" ;;
+    ndjson)
+      EXT="ndjson"
+      if $FAST_MODE; then
+        # Fast mode: output raw lines without JSON wrapping
+        COPY_OPTS="FORMAT CSV, HEADER false, DELIMITER '', QUOTE ''"
+      else
+        COPY_OPTS="FORMAT JSON"
+      fi
+      ;;
     parquet) EXT="parquet"; COPY_OPTS="FORMAT PARQUET" ;;
     csv)     EXT="csv";     COPY_OPTS="FORMAT CSV, HEADER" ;;
     tsv)     EXT="tsv";     COPY_OPTS="FORMAT CSV, HEADER, DELIMITER '\t'" ;;
     xml)     EXT="xml";     COPY_OPTS="FORMAT JSON" ;;
-    jsonl|json) EXT="json"; COPY_OPTS="FORMAT JSON" ;;
+    jsonl|json)
+      EXT="json"
+      if $FAST_MODE; then
+        # Fast mode: output raw lines without JSON wrapping
+        COPY_OPTS="FORMAT CSV, HEADER false, DELIMITER '', QUOTE ''"
+      else
+        COPY_OPTS="FORMAT JSON"
+      fi
+      ;;
     "") echo "Error: --format must be specified or use --sql without --format for analytical mode"; exit 1 ;;
     *) echo "Error: --format must be ndjson, parquet, json, csv, tsv, or xml"; exit 1 ;;
   esac
@@ -234,6 +253,36 @@ if ! $ANALYTICAL_MODE; then
   # Add compression if requested
   if $COMPRESSED; then
     COPY_OPTS="$COPY_OPTS, COMPRESSION GZIP"
+  fi
+fi
+
+# Validation for --fast-mode
+if $FAST_MODE; then
+  # Fast mode only works for NDJSON/JSONL → NDJSON/JSONL
+  if ! [[ "$FORMAT" =~ ^(ndjson|jsonl|json)$ ]]; then
+    echo "Error: --fast-mode can only be used when output format is ndjson/jsonl/json" >&2
+    exit 1
+  fi
+
+  # Fast mode cannot be used with transformations
+  if [[ "$SELECT_COLUMNS" != "*" ]]; then
+    echo "Error: --fast-mode cannot be used with column selection (--cols)" >&2
+    exit 1
+  fi
+
+  if $DEDUPE; then
+    echo "Error: --fast-mode cannot be used with --dedupe" >&2
+    exit 1
+  fi
+
+  if [[ -n "$SQL_FILE" ]]; then
+    echo "Error: --fast-mode cannot be used with SQL transformations (--sql)" >&2
+    exit 1
+  fi
+
+  if [[ -n "$JQ_EXPRESSION" ]]; then
+    echo "Error: --fast-mode cannot be used with jq transformations (--jq)" >&2
+    exit 1
   fi
 fi
 
@@ -309,6 +358,13 @@ get_file_format() {
 
 get_duckdb_func() {
   local ext="$1"
+
+  # Fast mode: treat NDJSON/JSONL as raw lines when input and output are both JSON formats
+  if $FAST_MODE && [[ "$ext" =~ ^(ndjson|jsonl|json)$ ]] && [[ "$FORMAT" =~ ^(ndjson|jsonl|json)$ ]]; then
+    echo "read_csv_fastmode"  # Special marker for fast mode
+    return
+  fi
+
   case "$ext" in
     parquet) echo "read_parquet" ;;
     csv)     echo "read_csv_auto" ;;
@@ -329,7 +385,11 @@ get_duckdb_func() {
 build_duckdb_call() {
   local func="$1"
   local file_path="$2"
-  if [[ "$func" == "read_xml" ]]; then
+  if [[ "$func" == "read_csv_fastmode" ]]; then
+    # Fast mode: read each line as a single column without JSON parsing
+    # read_csv with defaults reads line-by-line when no delimiter matches
+    echo "read_csv('$file_path', header=false, columns={'line': 'VARCHAR'})"
+  elif [[ "$func" == "read_xml" ]]; then
     # Use read_xml with proper configuration for complex XML structures
     echo "read_xml('$file_path', root_element='$XML_ROOT', auto_detect=true, maximum_file_size=52428800, ignore_errors=true)"
   elif [[ "$func" == "read_csv" ]]; then
@@ -346,7 +406,10 @@ build_duckdb_call() {
 build_duckdb_array_call() {
   local func="$1"
   local file_array="$2"
-  if [[ "$func" == "read_xml" ]]; then
+  if [[ "$func" == "read_csv_fastmode" ]]; then
+    # Fast mode: read each file's lines as strings
+    echo "read_csv($file_array, header=false, columns={'line': 'VARCHAR'})"
+  elif [[ "$func" == "read_xml" ]]; then
     # For XML arrays, read_xml doesn't support arrays, so we need to UNION individual calls
     # file_array comes in as "ARRAY['file1','file2']" format, extract individual files
     local files_str=$(echo "$file_array" | sed 's/ARRAY\[\(.*\)\]/\1/')
@@ -490,6 +553,12 @@ find_input_files() {
 }
 
 select_clause() {
+  # Fast mode: only select the 'line' column
+  if $FAST_MODE && [[ "$FORMAT" =~ ^(ndjson|jsonl|json)$ ]]; then
+    echo "line"
+    return
+  fi
+
   if [[ -z "${SELECT_COLUMNS:-}" || "${SELECT_COLUMNS// /}" == "" || "$SELECT_COLUMNS" == "*" ]]; then
     echo "*"
   else
@@ -1151,7 +1220,7 @@ if [[ -d "$INPUT_PATH" || "$INPUT_PATH" =~ ^(gs|s3):// ]]; then
     fi
   else
     export -f convert_file
-    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX XML_ROOT COMPRESSED
+    export EXT COPY_OPTS DEDUPE SELECT_COLUMNS OUTPUT_DIR ROWS_PER_FILE cloud_secret_sql SQL_FILE VERBOSE POST_URL HTTP_RATE_LIMIT_DELAY LOG_RESPONSES RESPONSE_LOG_FILE HTTP_START_TIME HTTP_REQUEST_COUNT HTTP_RECORD_COUNT JQ_EXPRESSION FILE_PREFIX FILE_SUFFIX XML_ROOT COMPRESSED FAST_MODE
     # Export HTTP_HEADERS array elements as individual variables for subprocesses
     for i in "${!HTTP_HEADERS[@]}"; do
       export "HTTP_HEADER_$i=${HTTP_HEADERS[$i]}"

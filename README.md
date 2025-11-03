@@ -71,6 +71,7 @@ npx duck-shard ./events.json --sql "SELECT * WHERE event='purchase'" --url https
 
 **File conversion:** Parquet ↔ CSV ↔ TSV ↔ NDJSON ↔ XML ↔ JSON (supports .gz, .bz2, .xz, .zst compression)
 **Compressed output:** Write gzip-compressed files with `--compressed` flag (adds .gz extension)
+**Fast mode:** Skip JSON parsing for NDJSON→NDJSON operations (25-50% faster for large files)
 **SQL transforms:** Full DuckDB power on any file format
 **JSON transforms:** jq expressions for reshaping data
 **API streaming:** POST results directly to webhooks
@@ -100,6 +101,10 @@ duck-shard gs://bucket/data.tsv.gz -f csv -o ./clean/
 duck-shard data/ -f parquet --compressed -o ./output/
 duck-shard events.csv -f ndjson --compressed -o ./compressed/
 duck-shard data/ --single-file --compressed -o ./merged.csv.gz
+
+# Fast mode for NDJSON splitting (25-50% faster, no JSON parsing)
+duck-shard huge.ndjson --fast-mode -f ndjson --rows 10000 -o ./chunks/
+duck-shard events/*.jsonl --fast-mode -f ndjson -s merged.ndjson -o ./output/
 
 # Convert XML to CSV with custom root element
 duck-shard data.xml --xml-root 'records' -f csv -o ./output/
@@ -298,6 +303,7 @@ duck-shard <input> [options]
 - `-o, --output` - Directory or file path (detects automatically in `--single-file` mode)
 - `-s, --single-file` - Merge all inputs into one output
 - `--compressed` - Write gzip-compressed output files (adds `.gz` extension)
+- `--fast-mode` - Skip JSON parsing for NDJSON→NDJSON (25-50% faster, no transformations)
 - `--cols` - Column selection: `'col1,$email,col3'` (use single quotes for $ names)
 - `--sql` - Custom SQL file (gets `input_data` view)
 - `--jq` - JSON transformation expression
