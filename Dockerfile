@@ -19,8 +19,8 @@ RUN duckdb --version && jq --version && node --version
 
 WORKDIR /app
 
-# Copy package.json first for better Docker layer caching
-COPY package.json ./
+# Copy package files first for better Docker layer caching
+COPY package.json package-lock.json ./
 
 # Install Node.js dependencies
 RUN npm ci --only=production
@@ -28,6 +28,8 @@ RUN npm ci --only=production
 # Copy application files
 COPY duck-shard.sh ./
 COPY server.mjs ./
+COPY ui/ ./ui/
+COPY lib/ ./lib/
 
 # Make duck-shard.sh executable
 RUN chmod +x ./duck-shard.sh

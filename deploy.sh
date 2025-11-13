@@ -10,7 +10,7 @@ NC='\033[0m' # No Color
 
 # Default values
 REGION="${REGION:-us-central1}"
-SERVICE_NAME="${SERVICE_NAME:-duck-shard-api}"
+SERVICE_NAME="${SERVICE_NAME:-duck-shard}"
 MEMORY="${MEMORY:-4Gi}"
 CPU="${CPU:-2}"
 TIMEOUT="${TIMEOUT:-900}"
