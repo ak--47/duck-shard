@@ -164,6 +164,13 @@ duck-shard data.parquet --sql ./transform.sql -f ndjson -o ./processed/
 ```bash
 duck-shard data.parquet --sql ./analysis.sql -o ./reports/
 # Shows formatted table in terminal AND saves query_result.csv
+
+# Quick row count (shortcut for SELECT COUNT(*))
+duck-shard events.ndjson --count
+duck-shard data/ --count  # Count all files in directory
+
+# Fast mode for ultra-fast JSONL counting
+duck-shard huge.jsonl --count --fast-mode
 ```
 
 Your SQL files get an `input_data` view automatically:
@@ -306,6 +313,7 @@ duck-shard <input> [options]
 - `--fast-mode` - Skip JSON parsing for NDJSON→NDJSON (25-50% faster, no transformations)
 - `--cols` - Column selection: `'col1,$email,col3'` (use single quotes for $ names)
 - `--sql` - Custom SQL file (gets `input_data` view)
+- `--count` - Quick row count (analytical mode shortcut for `SELECT COUNT(*)`)
 - `--jq` - JSON transformation expression
 - `--preview` - Test on first N rows without writing files
 - `--verbose` - Show SQL commands and progress bars

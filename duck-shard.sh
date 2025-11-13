@@ -34,6 +34,7 @@ GCS_SECRET="${GCS_SECRET:-}"
 S3_KEY_ID="${S3_KEY_ID:-}"
 S3_SECRET="${S3_SECRET:-}"
 SQL_FILE=""
+COUNT_ROWS=false
 VERBOSE=false
 POST_URL=""
 HTTP_HEADERS=()
@@ -70,6 +71,7 @@ Options:
   -o, --output <output_dir>             Output directory (local or gs://... or s3://...)
   -r, --rows <rows_per_file>            Split output files with N rows each (not for --single-file)
   --sql <sql_file>                      Use custom SQL SELECT (on temp view input_data)
+  --count                               Count rows (analytical mode shortcut for SELECT COUNT(*))
   --gcs-key <key> --gcs-secret <secret> GCS HMAC credentials
   --s3-key <key> --s3-secret <secret>   S3 HMAC credentials
   --url <api_url>                       POST processed data to API URL in batches
@@ -130,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --sql) [[ $# -ge 2 ]] || { echo "Error: --sql needs an argument"; exit 1; }
       SQL_FILE="$2"; [[ -f "$SQL_FILE" ]] || { echo "Error: SQL file $SQL_FILE not found"; exit 1; }
       shift 2 ;;
+    --count) COUNT_ROWS=true; shift ;;
     --gcs-key) [[ $# -ge 2 ]] || { echo "Error: --gcs-key needs an argument"; exit 1; }
       GCS_KEY_ID="$2"; shift 2 ;;
     --gcs-secret) [[ $# -ge 2 ]] || { echo "Error: --gcs-secret needs an argument"; exit 1; }
@@ -206,9 +209,18 @@ if [[ -n "${OUTPUT_DIR:-}" && ! "${OUTPUT_DIR}" =~ ^(gs|s3):// ]]; then
   mkdir -p "$OUTPUT_DIR"
 fi
 
-# Detect analytical query mode (no --format specified but --sql is provided)
+# Handle --count shortcut
+if $COUNT_ROWS; then
+  # Create temporary SQL file for counting
+  SQL_FILE=$(mktemp)
+  echo "SELECT COUNT(*) as count FROM input_data" > "$SQL_FILE"
+  # Clean up temp file on exit
+  trap "rm -f $SQL_FILE" EXIT
+fi
+
+# Detect analytical query mode (no --format specified but --sql is provided or --count is used)
 ANALYTICAL_MODE=false
-if [[ $FORMAT_EXPLICITLY_SET == false && -n "$SQL_FILE" ]]; then
+if [[ $FORMAT_EXPLICITLY_SET == false && (-n "$SQL_FILE" || $COUNT_ROWS) ]]; then
   ANALYTICAL_MODE=true
   # Set default output directory if not specified
   if [[ -z "$OUTPUT_DIR" ]]; then
@@ -258,10 +270,14 @@ fi
 
 # Validation for --fast-mode
 if $FAST_MODE; then
-  # Fast mode only works for NDJSON/JSONL → NDJSON/JSONL
-  if ! [[ "$FORMAT" =~ ^(ndjson|jsonl|json)$ ]]; then
-    echo "Error: --fast-mode can only be used when output format is ndjson/jsonl/json" >&2
-    exit 1
+  # Fast mode only works for NDJSON/JSONL input
+  # In analytical mode, there's no output format (just displays results)
+  # In ETL mode, output must be NDJSON/JSONL
+  if ! $ANALYTICAL_MODE; then
+    if ! [[ "$FORMAT" =~ ^(ndjson|jsonl|json)$ ]]; then
+      echo "Error: --fast-mode can only be used when output format is ndjson/jsonl/json" >&2
+      exit 1
+    fi
   fi
 
   # Fast mode cannot be used with transformations
@@ -275,8 +291,11 @@ if $FAST_MODE; then
     exit 1
   fi
 
-  if [[ -n "$SQL_FILE" ]]; then
-    echo "Error: --fast-mode cannot be used with SQL transformations (--sql)" >&2
+  # In ETL mode, SQL transformations are not allowed
+  # In analytical mode, SQL is allowed (that's the whole point!)
+  if [[ -n "$SQL_FILE" && ! $ANALYTICAL_MODE ]]; then
+    echo "Error: --fast-mode cannot be used with SQL transformations in ETL mode" >&2
+    echo "Hint: Use --fast-mode with --sql or --count for fast analytical queries on NDJSON data" >&2
     exit 1
   fi
 

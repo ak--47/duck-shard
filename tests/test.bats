@@ -2608,6 +2608,125 @@ teardown
     [[ "$output" =~ "Skip JSON parsing" ]]
 }
 
+##### ==== COUNT MODE TESTS ====
+
+# Test --count with parquet file
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --count
+@test "count mode: parquet file count" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$in_file" --count
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    # Should have more than 1000 rows
+    [[ "$output" =~ "10027" ]]
+}
+
+# Test --count with CSV file
+# ./duck-shard.sh ./tests/testData/csv/part-1.csv --count
+@test "count mode: csv file count" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/csv" "csv")
+    run "$SCRIPT_PATH" "$in_file" --count
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    # Should have more than 0 rows
+    [[ "$output" =~ [0-9]+ ]]
+}
+
+# Test --count with NDJSON file
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --count
+@test "count mode: ndjson file count" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --count
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    # Check for reasonable row count (5-digit number)
+    [[ "$output" =~ [0-9][0-9][0-9][0-9][0-9] ]]
+}
+
+# Test --count with TSV file
+# ./duck-shard.sh ./tests/testData/tsv/part-1.tsv --count
+@test "count mode: tsv file count" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/tsv" "tsv")
+    run "$SCRIPT_PATH" "$in_file" --count
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    [[ "$output" =~ [0-9]+ ]]
+}
+
+# Test --count with directory (multiple files)
+# ./duck-shard.sh ./tests/testData/ndjson --count
+@test "count mode: directory count" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --count
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    # Should count all files - should be in the tens of thousands
+    [[ "$output" =~ "505" ]]
+}
+
+# Test --count with fast mode
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --count --fast-mode
+@test "count mode: with fast mode on ndjson" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    run "$SCRIPT_PATH" "$in_file" --count --fast-mode
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+    # Check for reasonable count (around 10k)
+    [[ "$output" =~ "100" ]]
+}
+
+# Test --count creates query_result.csv
+# ./duck-shard.sh ./tests/testData/parquet/part-1.parquet --count -o ./tmp
+@test "count mode: creates query_result.csv" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/parquet" "parquet")
+    run "$SCRIPT_PATH" "$in_file" --count -o "$TEST_OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    file_exists_and_not_empty "$TEST_OUTPUT_DIR/query_result.csv"
+    # Verify CSV contains the count
+    run cat "$TEST_OUTPUT_DIR/query_result.csv"
+    [[ "$output" =~ "count" ]]
+    # Should have a reasonable count (around 10k)
+    [[ "$output" =~ "100" ]]
+}
+
+# Test analytical mode with fast mode (custom SQL)
+# ./duck-shard.sh ./tests/testData/ndjson/part-1.ndjson --fast-mode --sql ./query.sql
+@test "fast mode: analytical mode with custom SQL" {
+    teardown
+    local in_file=$(get_first_file "$TEST_DATA_DIR/ndjson" "ndjson")
+    local sql_file="$TEST_OUTPUT_DIR/test.sql"
+    echo "SELECT COUNT(*) as total FROM input_data" > "$sql_file"
+    run "$SCRIPT_PATH" "$in_file" --fast-mode --sql "$sql_file"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "total" ]]
+    # Check for reasonable count (around 10k)
+    [[ "$output" =~ "100" ]]
+}
+
+# Test that fast mode + analytical works faster than regular
+# This is more of a sanity check that it doesn't error
+@test "fast mode: analytical mode directory count" {
+    teardown
+    run "$SCRIPT_PATH" "$TEST_DATA_DIR/ndjson" --count --fast-mode
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "count" ]]
+}
+
+# Test help mentions --count
+@test "count mode: help mentions --count option" {
+    teardown
+    run "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--count" ]]
+    [[ "$output" =~ "COUNT" ]]
+}
+
 ##### ==== CLEANUP ====
 
 # Global cleanup to remove test data from GCS writeHere directory
