@@ -99,8 +99,8 @@ function broadcastToJob(jobId, message) {
     }
 }
 
-// Set timeouts for Cloud Run
-const CLOUD_RUN_TIMEOUT = 850; // seconds (Cloud Run max is 900, leave some buffer)
+// Per-request timeout for /run jobs
+const CLOUD_RUN_TIMEOUT = 850; // seconds
 
 // CLI param mapping
 function buildArgs(params) {
@@ -324,7 +324,7 @@ app.post('/run', async (req, res) => {
     });
 });
 
-// Health check endpoint for Cloud Run
+// Health check endpoint
 app.get('/health', (_, res) => {
     res.status(200).json({
         status: 'healthy',
