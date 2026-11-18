@@ -35,7 +35,9 @@ bats tests/test.bats
 npm run dev  # or npx duck-shard --ui
 ```
 
-### Building & Deployment
+### Building
+
+There is no hosted deployment. duck-shard ships only as a CLI and a local web UI.
 
 ```bash
 # Test locally
